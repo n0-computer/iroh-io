@@ -291,7 +291,7 @@ impl FileAdapterFsm {
     }
 }
 
-/// Utility to convert an [`AsyncWrite`] into an [`AsyncSliceWriter`] by just ignoring the offsets
+/// Utility to convert an [AsyncWrite] into an [AsyncSliceWriter] by just ignoring the offsets
 #[derive(Debug)]
 pub struct ConcatenateSliceWriter<W>(W);
 
