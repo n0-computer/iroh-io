@@ -38,7 +38,7 @@ impl File {
 
     /// Open a [File] from a path
     pub async fn open(path: PathBuf) -> io::Result<Self> {
-        Self::create(move || std::fs::File::open(&path)).await
+        Self::create(move || std::fs::File::open(path)).await
     }
 
     #[cfg(test)]
