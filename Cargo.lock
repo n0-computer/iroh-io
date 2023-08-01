@@ -452,7 +452,7 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 
 [[package]]
 name = "iroh-io"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "axum",
  "bytes",
