@@ -22,7 +22,7 @@ pub struct File(Option<FileAdapterFsm>);
 impl File {
     /// Create a new [File] from a function that creates a [std::fs::File]
     pub async fn create(
-        create_file: impl Fn() -> io::Result<std::fs::File> + Send + 'static,
+        create_file: impl FnOnce() -> io::Result<std::fs::File> + Send + 'static,
     ) -> io::Result<Self> {
         let inner = spawn_blocking(create_file).await.map_err(make_io_error)??;
         Ok(Self::from_std(inner))
