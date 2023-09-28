@@ -26,6 +26,23 @@ pub struct Stats {
     pub duration: Duration,
 }
 
+impl std::ops::Add<Stats> for Stats {
+    type Output = Stats;
+
+    fn add(self, rhs: Stats) -> Self::Output {
+        Self {
+            count: self.count.saturating_add(rhs.count),
+            duration: self.duration.saturating_add(rhs.duration),
+        }
+    }
+}
+
+impl std::ops::AddAssign<Stats> for Stats {
+    fn add_assign(&mut self, rhs: Stats) {
+        *self = *self + rhs;
+    }
+}
+
 /// Statistics about a tracked operation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SizeAndStats {
@@ -33,6 +50,29 @@ pub struct SizeAndStats {
     pub size: u64,
     /// Statistics about the operation.
     pub stats: Stats,
+}
+
+impl From<Stats> for SizeAndStats {
+    fn from(stats: Stats) -> Self {
+        Self { size: 0, stats }
+    }
+}
+
+impl std::ops::Add<SizeAndStats> for SizeAndStats {
+    type Output = SizeAndStats;
+
+    fn add(self, rhs: SizeAndStats) -> Self::Output {
+        Self {
+            size: self.size.saturating_add(rhs.size),
+            stats: self.stats + rhs.stats,
+        }
+    }
+}
+
+impl std::ops::AddAssign<SizeAndStats> for SizeAndStats {
+    fn add_assign(&mut self, rhs: SizeAndStats) {
+        *self = *self + rhs;
+    }
 }
 
 /// Statistics about a stream writer.
@@ -44,6 +84,37 @@ pub struct StreamWriterStats {
     pub write_bytes: SizeAndStats,
     /// Statistics about the `sync` operation.
     pub sync: Stats,
+}
+
+impl StreamWriterStats {
+    /// Gives the total stats for this writer.
+    ///
+    /// This adds the count and duration from all three operations,
+    /// and the total number of bytes written from write and wite_bytes.
+    ///
+    /// It is important to also add the sync stats, because some buffered
+    /// writers will do most actual io in sync.
+    pub fn total(&self) -> SizeAndStats {
+        self.write + self.write_bytes + self.sync.into()
+    }
+}
+
+impl std::ops::Add<StreamWriterStats> for StreamWriterStats {
+    type Output = StreamWriterStats;
+
+    fn add(self, rhs: StreamWriterStats) -> Self::Output {
+        Self {
+            write: self.write + rhs.write,
+            write_bytes: self.write_bytes + rhs.write_bytes,
+            sync: self.sync + rhs.sync,
+        }
+    }
+}
+
+impl std::ops::AddAssign<StreamWriterStats> for StreamWriterStats {
+    fn add_assign(&mut self, rhs: StreamWriterStats) {
+        *self = *self + rhs;
+    }
 }
 
 /// A stream writer that tracks the time spent in write operations.
@@ -102,8 +173,31 @@ impl<W: AsyncStreamWriter> AsyncStreamWriter for TrackingStreamWriter<W> {
 /// Statistics about a stream writer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StreamReaderStats {
-    /// Statistics about the `write` operation.
+    /// Statistics about the `read` operation.
     pub read: SizeAndStats,
+}
+
+impl StreamReaderStats {
+    /// Gives the total stats for this reader.
+    pub fn total(&self) -> SizeAndStats {
+        self.read
+    }
+}
+
+impl std::ops::Add<StreamReaderStats> for StreamReaderStats {
+    type Output = StreamReaderStats;
+
+    fn add(self, rhs: StreamReaderStats) -> Self::Output {
+        Self {
+            read: self.read + rhs.read,
+        }
+    }
+}
+
+impl std::ops::AddAssign<StreamReaderStats> for StreamReaderStats {
+    fn add_assign(&mut self, rhs: StreamReaderStats) {
+        *self = *self + rhs;
+    }
 }
 
 /// A stream writer that tracks the time spent in write operations.
@@ -144,6 +238,30 @@ pub struct SliceReaderStats {
     pub read_at: SizeAndStats,
     /// Statistics about the `len` operation.
     pub len: Stats,
+}
+
+impl SliceReaderStats {
+    /// Gives the total stats for this reader.
+    pub fn total(&self) -> SizeAndStats {
+        self.read_at + self.len.into()
+    }
+}
+
+impl std::ops::Add<SliceReaderStats> for SliceReaderStats {
+    type Output = SliceReaderStats;
+
+    fn add(self, rhs: SliceReaderStats) -> Self::Output {
+        Self {
+            read_at: self.read_at + rhs.read_at,
+            len: self.len + rhs.len,
+        }
+    }
+}
+
+impl std::ops::AddAssign<SliceReaderStats> for SliceReaderStats {
+    fn add_assign(&mut self, rhs: SliceReaderStats) {
+        *self = *self + rhs;
+    }
 }
 
 /// A slice reader that tracks the time spent in read operations.
@@ -194,6 +312,32 @@ pub struct SliceWriterStats {
     pub set_len: Stats,
     /// Statistics about the `sync` operation.
     pub sync: Stats,
+}
+
+impl SliceWriterStats {
+    /// Gives the total stats for this writer.
+    pub fn total(&self) -> SizeAndStats {
+        self.write_at + self.write_bytes_at + self.set_len.into() + self.sync.into()
+    }
+}
+
+impl std::ops::Add<SliceWriterStats> for SliceWriterStats {
+    type Output = SliceWriterStats;
+
+    fn add(self, rhs: SliceWriterStats) -> Self::Output {
+        Self {
+            write_at: self.write_at + rhs.write_at,
+            write_bytes_at: self.write_bytes_at + rhs.write_bytes_at,
+            set_len: self.set_len + rhs.set_len,
+            sync: self.sync + rhs.sync,
+        }
+    }
+}
+
+impl std::ops::AddAssign<SliceWriterStats> for SliceWriterStats {
+    fn add_assign(&mut self, rhs: SliceWriterStats) {
+        *self = *self + rhs;
+    }
 }
 
 /// A slice writer that tracks the time spent in write operations.
