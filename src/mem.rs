@@ -1,3 +1,5 @@
+use crate::AsyncStreamWriter;
+
 use super::{AsyncSliceReader, AsyncSliceWriter};
 use bytes::{Bytes, BytesMut};
 use futures::future;
@@ -51,6 +53,66 @@ impl AsyncSliceWriter for bytes::BytesMut {
     }
 }
 
+impl AsyncSliceWriter for Vec<u8> {
+    type WriteBytesAtFuture<'a> = future::Ready<io::Result<()>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        future::ready(write_extend_vec(self, offset, &data))
+    }
+
+    type WriteAtFuture<'a> = future::Ready<io::Result<()>>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+        future::ready(write_extend_vec(self, offset, data))
+    }
+
+    type SetLenFuture<'a> = future::Ready<io::Result<()>>;
+    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+        let len = len.try_into().unwrap_or(usize::MAX);
+        self.resize(len, 0);
+        future::ok(())
+    }
+
+    type SyncFuture<'a> = future::Ready<io::Result<()>>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        future::ok(())
+    }
+}
+
+impl AsyncStreamWriter for Vec<u8> {
+    type WriteFuture<'a> = futures::future::Ready<io::Result<()>>;
+    fn write(&mut self, data: &[u8]) -> Self::WriteFuture<'_> {
+        self.extend_from_slice(data);
+        futures::future::ok(())
+    }
+
+    type WriteBytesFuture<'a> = Self::WriteFuture<'a>;
+    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
+        self.write(&data)
+    }
+
+    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        futures::future::ok(())
+    }
+}
+
+impl AsyncStreamWriter for bytes::BytesMut {
+    type WriteFuture<'a> = futures::future::Ready<io::Result<()>>;
+    fn write(&mut self, data: &[u8]) -> Self::WriteFuture<'_> {
+        self.extend_from_slice(data);
+        futures::future::ok(())
+    }
+
+    type WriteBytesFuture<'a> = Self::WriteFuture<'a>;
+    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
+        self.write(&data)
+    }
+
+    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        futures::future::ok(())
+    }
+}
+
 pub(crate) fn limited_range(offset: u64, len: usize, buf_len: usize) -> std::ops::Range<usize> {
     if offset < buf_len as u64 {
         let start = offset as usize;
@@ -88,6 +150,32 @@ fn write_extend(bytes: &mut BytesMut, offset: u64, data: &[u8]) -> io::Result<()
         return Ok(());
     }
     if end > BytesMut::len(bytes) {
+        bytes.resize(start, 0);
+        bytes.extend_from_slice(data);
+    } else {
+        bytes[start..end].copy_from_slice(data);
+    }
+
+    Ok(())
+}
+
+fn write_extend_vec(bytes: &mut Vec<u8>, offset: u64, data: &[u8]) -> io::Result<()> {
+    let start = usize::try_from(offset).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "start is too large to fit in usize",
+        )
+    })?;
+    let end = start.checked_add(data.len()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "offset + data.len() is too large to fit in usize",
+        )
+    })?;
+    if data.is_empty() {
+        return Ok(());
+    }
+    if end > Vec::len(bytes) {
         bytes.resize(start, 0);
         bytes.extend_from_slice(data);
     } else {

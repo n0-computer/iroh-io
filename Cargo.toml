@@ -21,7 +21,8 @@ tokio-util = { version = "0.7", default-features = false, optional = true }
 [features]
 http = ["reqwest"]
 tokio-io = ["tokio", "smallvec"]
-default = ["tokio-io"]
+stats = []
+default = ["tokio-io", "stats"]
 
 [dev-dependencies]
 axum = { version = "0.6" }

@@ -4,16 +4,21 @@ use futures::{future::LocalBoxFuture, Future, FutureExt};
 use pin_project::pin_project;
 use std::{
     io::{self, Read, Seek, SeekFrom},
+    marker::PhantomPinned,
     path::PathBuf,
     pin::Pin,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
 };
 use tokio::{
-    io::{AsyncWrite, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite},
     task::{spawn_blocking, JoinHandle},
 };
 
-use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter};
+use crate::AsyncStreamReader;
+
+use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter, AsyncStreamWriter};
+
+const MAX_PREALLOC: usize = 1024 * 16;
 
 /// A wrapper around a [std::fs::File] that implements [AsyncSliceReader] and [AsyncSliceWriter]
 #[derive(Debug)]
@@ -228,7 +233,7 @@ impl FileAdapterFsm {
         spawn_blocking(move || {
             // len is just the expected len, so if it is too big, we should not allocate
             // the entire size.
-            let mut buf = Vec::with_capacity(len.min(1024));
+            let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
             let res = inner(&mut self.0, offset, len, &mut buf);
             (self, res.map(|_| buf.into()))
         })
@@ -308,24 +313,211 @@ impl<W> ConcatenateSliceWriter<W> {
 }
 
 impl<W: AsyncWrite + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWriter<W> {
-    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    type WriteBytesAtFuture<'a> = concatenate_slice_writer::WriteBytesAt<'a, W>;
     fn write_bytes_at(&mut self, _offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        async move { self.0.write_all(&data).await }.boxed_local()
+        tokio_helper::write_bytes(&mut self.0, data)
     }
 
-    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_at(&mut self, _offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
-        let t: smallvec::SmallVec<[u8; 16]> = bytes.into();
-        async move { self.0.write_all(&t).await }.boxed_local()
+    type WriteAtFuture<'a> = concatenate_slice_writer::WriteAt<'a, W>;
+    fn write_at<'a>(&'a mut self, _offset: u64, bytes: &'a [u8]) -> Self::WriteAtFuture<'a> {
+        tokio_helper::write(&mut self.0, bytes)
     }
 
-    type SyncFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    type SyncFuture<'a> = concatenate_slice_writer::Sync<'a, W>;
     fn sync(&mut self) -> Self::SyncFuture<'_> {
-        self.0.flush().boxed_local()
+        tokio_helper::flush(&mut self.0)
     }
 
     type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
     fn set_len(&mut self, _len: u64) -> Self::SetLenFuture<'_> {
         futures::future::ready(io::Result::Ok(()))
+    }
+}
+
+/// Futures for [ConcatenateSliceWriter].
+pub mod concatenate_slice_writer {
+    use super::*;
+
+    pub use tokio_helper::{Flush as Sync, Write as WriteAt, WriteBytes as WriteBytesAt};
+}
+
+/// Utility to convert a [tokio::io::AsyncWrite] into an [AsyncStreamWriter].
+#[derive(Debug, Clone)]
+pub struct TokioStreamWriter<T>(T);
+
+impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T> {
+    type WriteFuture<'a> = tokio_stream_writer::Write<'a, T> where Self: 'a;
+
+    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
+        tokio_helper::write(&mut self.0, data)
+    }
+
+    type WriteBytesFuture<'a> = tokio_stream_writer::WriteBytes<'a, T> where Self: 'a;
+
+    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
+        tokio_helper::write_bytes(&mut self.0, data)
+    }
+
+    type SyncFuture<'a> = tokio_stream_writer::Sync<'a, T> where Self: 'a;
+
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        tokio_helper::flush(&mut self.0)
+    }
+}
+
+/// Utility to convert a [tokio::io::AsyncRead] into an [AsyncStreamReader].
+#[derive(Debug, Clone)]
+pub struct TokioStreamReader<T>(T);
+
+impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T> {
+    type ReadFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>
+    where
+        Self: 'a;
+
+    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
+        async move {
+            let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
+            (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
+            Ok(buf.into())
+        }
+        .boxed_local()
+    }
+}
+
+/// Futures for [TokioStreamWriter].
+pub mod tokio_stream_writer {
+    use super::*;
+
+    pub use tokio_helper::{Flush as Sync, Write, WriteBytes};
+}
+
+/// Futures copied from tokio, because they are private in tokio
+mod tokio_helper {
+    use bytes::Buf;
+
+    use super::*;
+
+    /// Future returned by [write].
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    #[pin_project]
+    pub struct Write<'a, W: ?Sized> {
+        writer: &'a mut W,
+        buf: &'a [u8],
+        // Make this future `!Unpin` for compatibility with async trait methods.
+        #[pin]
+        _pin: PhantomPinned,
+    }
+
+    pub(crate) fn write<'a, W>(writer: &'a mut W, buf: &'a [u8]) -> Write<'a, W>
+    where
+        W: AsyncWrite + Unpin + ?Sized,
+    {
+        Write {
+            writer,
+            buf,
+            _pin: PhantomPinned,
+        }
+    }
+
+    impl<W> Future for Write<'_, W>
+    where
+        W: AsyncWrite + Unpin + ?Sized,
+    {
+        type Output = io::Result<()>;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let me = self.project();
+            while !me.buf.is_empty() {
+                let n = ready!(Pin::new(&mut *me.writer).poll_write(cx, me.buf))?;
+                {
+                    let (_, rest) = std::mem::take(&mut *me.buf).split_at(n);
+                    *me.buf = rest;
+                }
+                if n == 0 {
+                    return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                }
+            }
+
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Future returned by [write].
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    #[pin_project]
+    pub struct WriteBytes<'a, W: ?Sized> {
+        writer: &'a mut W,
+        bytes: Bytes,
+        // Make this future `!Unpin` for compatibility with async trait methods.
+        #[pin]
+        _pin: PhantomPinned,
+    }
+
+    pub(crate) fn write_bytes<W>(writer: &mut W, bytes: Bytes) -> WriteBytes<'_, W>
+    where
+        W: AsyncWrite + Unpin + ?Sized,
+    {
+        WriteBytes {
+            writer,
+            bytes,
+            _pin: PhantomPinned,
+        }
+    }
+
+    impl<W> Future for WriteBytes<'_, W>
+    where
+        W: AsyncWrite + Unpin + ?Sized,
+    {
+        type Output = io::Result<()>;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let me = self.project();
+            while !me.bytes.is_empty() {
+                let n = ready!(Pin::new(&mut *me.writer).poll_write(cx, me.bytes))?;
+                // this could panic if n > len, but that would violate the contract of AsyncWrite
+                me.bytes.advance(n);
+                if n == 0 {
+                    return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                }
+            }
+
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Future for [TokioWrapper::flush].
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    #[pin_project]
+    pub struct Flush<'a, A: ?Sized> {
+        a: &'a mut A,
+        // Make this future `!Unpin` for compatibility with async trait methods.
+        #[pin]
+        _pin: PhantomPinned,
+    }
+
+    /// Creates a future which will entirely flush an I/O object.
+    pub(crate) fn flush<A>(a: &mut A) -> Flush<'_, A>
+    where
+        A: AsyncWrite + Unpin + ?Sized,
+    {
+        Flush {
+            a,
+            _pin: PhantomPinned,
+        }
+    }
+
+    impl<A> Future for Flush<'_, A>
+    where
+        A: AsyncWrite + Unpin + ?Sized,
+    {
+        type Output = io::Result<()>;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            let me = self.project();
+            Pin::new(&mut *me.a).poll_flush(cx)
+        }
     }
 }

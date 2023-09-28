@@ -31,7 +31,10 @@
 //! In general it is assumed that readers are cheap, so in case of an error you can
 //! always get a new reader. Also, if you need concurrent access to the same resource,
 //! create multiple readers.
-
+//!
+//! One thing you might wonder is why there are separate methods for writing Bytes and writing slices.
+//! The reason is that if you already have Bytes and the underlying writer needs Bytes, you can avoid
+//! an allocation.
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 use bytes::Bytes;
@@ -127,7 +130,7 @@ pub trait AsyncSliceWriter: Sized {
     /// if self.len < offset + data.len(), the underlying resource will be extended.
     /// if self.len < offset, the gap will be filled with zeros.
     #[must_use = "io futures must be polled to completion"]
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_>;
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a>;
 
     /// The future returned by write_bytes_at
     type WriteBytesAtFuture<'a>: Future<Output = io::Result<()>> + 'a
@@ -163,7 +166,7 @@ impl<'b, T: AsyncSliceWriter> AsyncSliceWriter for &'b mut T {
     type SetLenFuture<'a> = T::SetLenFuture<'a> where T: 'a, 'b: 'a;
     type SyncFuture<'a> = T::SyncFuture<'a> where T: 'a, 'b: 'a;
 
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
         (**self).write_at(offset, data)
     }
 
@@ -186,7 +189,7 @@ impl<T: AsyncSliceWriter> AsyncSliceWriter for Box<T> {
     type SetLenFuture<'a> = T::SetLenFuture<'a> where T: 'a;
     type SyncFuture<'a> = T::SyncFuture<'a> where T: 'a;
 
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
         (**self).write_at(offset, data)
     }
 
@@ -200,6 +203,74 @@ impl<T: AsyncSliceWriter> AsyncSliceWriter for Box<T> {
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         (**self).sync()
+    }
+}
+
+/// A non seekable reader, e.g. a network socket.
+pub trait AsyncStreamReader {
+    /// Future returned by read
+    type ReadFuture<'a>: Future<Output = io::Result<Bytes>> + 'a
+    where
+        Self: 'a;
+    /// Read at most `len` bytes. To read to the end, pass u64::MAX.
+    ///
+    /// returns an empty buffer to indicate EOF.
+    fn read(&mut self, len: usize) -> Self::ReadFuture<'_>;
+}
+
+impl<T: AsyncStreamReader> AsyncStreamReader for &mut T {
+    type ReadFuture<'a> = T::ReadFuture<'a> where Self: 'a;
+
+    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
+        (**self).read(len)
+    }
+}
+
+/// A non seekable writer, e.g. a network socket.
+pub trait AsyncStreamWriter {
+    /// Future returned by write
+    type WriteFuture<'a>: Future<Output = io::Result<()>> + 'a
+    where
+        Self: 'a;
+    /// Write the entire slice.
+    ///
+    /// In case of an error, some bytes may have been written.
+    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a>;
+
+    /// Future returned by write
+    type WriteBytesFuture<'a>: Future<Output = io::Result<()>> + 'a
+    where
+        Self: 'a;
+    /// Write the entire bytes.
+    ///
+    /// In case of an error, some bytes may have been written.
+    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_>;
+
+    /// Future returned by sync
+    type SyncFuture<'a>: Future<Output = io::Result<()>> + 'a
+    where
+        Self: 'a;
+    /// Sync any buffers to the underlying storage.
+    fn sync(&mut self) -> Self::SyncFuture<'_>;
+}
+
+impl<T: AsyncStreamWriter> AsyncStreamWriter for &mut T {
+    type WriteFuture<'a> = T::WriteFuture<'a> where Self: 'a;
+
+    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
+        (**self).write(data)
+    }
+
+    type SyncFuture<'a> = T::SyncFuture<'a> where Self: 'a;
+
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        (**self).sync()
+    }
+
+    type WriteBytesFuture<'a> = T::WriteBytesFuture<'a> where Self: 'a;
+
+    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
+        (**self).write_bytes(data)
     }
 }
 
@@ -226,6 +297,9 @@ macro_rules! newtype_future {
 mod tokio_io;
 #[cfg(feature = "tokio-io")]
 pub use tokio_io::*;
+
+#[cfg(feature = "stats")]
+pub mod stats;
 
 #[cfg(feature = "http")]
 mod http;
@@ -271,7 +345,7 @@ where
     }
 
     type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
         match self {
             futures::future::Either::Left(l) => Either::Left(l.write_at(offset, data)),
             futures::future::Either::Right(r) => Either::Right(r.write_at(offset, data)),
@@ -333,7 +407,7 @@ where
     }
 
     type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
         match self {
             tokio_util::either::Either::Left(l) => Either::Left(l.write_at(offset, data)),
             tokio_util::either::Either::Right(r) => Either::Right(r.write_at(offset, data)),
