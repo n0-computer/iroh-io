@@ -397,7 +397,7 @@ mod tokio_helper {
 
     use super::*;
 
-    /// Future returned by [write].
+    /// Future that writes a slice to a writer
     #[derive(Debug)]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     #[pin_project]
@@ -443,7 +443,7 @@ mod tokio_helper {
         }
     }
 
-    /// Future returned by [write].
+    /// Future that writes Bytes to a writer
     #[derive(Debug)]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     #[pin_project]
@@ -487,7 +487,7 @@ mod tokio_helper {
         }
     }
 
-    /// Future for [TokioWrapper::flush].
+    /// Future that flushes a writer
     #[derive(Debug)]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     #[pin_project]

@@ -32,8 +32,8 @@
 //! always get a new reader. Also, if you need concurrent access to the same resource,
 //! create multiple readers.
 //!
-//! One thing you might wonder is why there are separate methods for writing Bytes and writing slices.
-//! The reason is that if you already have Bytes and the underlying writer needs Bytes, you can avoid
+//! One thing you might wonder is why there are separate methods for writing [Bytes] and writing slices.
+//! The reason is that if you already have [Bytes] and the underlying writer needs [Bytes], you can avoid
 //! an allocation.
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
