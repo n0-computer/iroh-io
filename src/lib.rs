@@ -226,6 +226,15 @@ impl<T: AsyncStreamReader> AsyncStreamReader for &mut T {
     }
 }
 
+impl AsyncStreamReader for Bytes {
+    type ReadFuture<'a> = futures::future::Ready<io::Result<Bytes>>;
+
+    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
+        let res = self.split_to(len.min(Bytes::len(self)));
+        futures::future::ok(res)
+    }
+}
+
 /// A non seekable writer, e.g. a network socket.
 pub trait AsyncStreamWriter {
     /// Future returned by write

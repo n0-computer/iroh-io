@@ -343,7 +343,7 @@ pub mod concatenate_slice_writer {
 
 /// Utility to convert a [tokio::io::AsyncWrite] into an [AsyncStreamWriter].
 #[derive(Debug, Clone)]
-pub struct TokioStreamWriter<T>(T);
+pub struct TokioStreamWriter<T>(pub T);
 
 impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T> {
     type WriteFuture<'a> = tokio_stream_writer::Write<'a, T> where Self: 'a;

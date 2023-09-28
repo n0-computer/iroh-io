@@ -47,7 +47,7 @@ pub struct StreamWriterStats {
 }
 
 /// A stream writer that tracks the time spent in write operations.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub struct TrackingStreamWriter<W> {
     inner: W,
     /// Statistics about the write operations.
@@ -107,7 +107,7 @@ pub struct StreamReaderStats {
 }
 
 /// A stream writer that tracks the time spent in write operations.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub struct TrackingStreamReader<W> {
     inner: W,
     /// Statistics about the write operations.
@@ -147,6 +147,7 @@ pub struct SliceReaderStats {
 }
 
 /// A slice reader that tracks the time spent in read operations.
+#[derive(Debug, Clone)]
 pub struct TrackingSliceReader<R> {
     inner: R,
     /// Statistics about the read operations.
@@ -196,6 +197,7 @@ pub struct SliceWriterStats {
 }
 
 /// A slice writer that tracks the time spent in write operations.
+#[derive(Debug, Clone)]
 pub struct TrackingSliceWriter<W> {
     inner: W,
     /// Statistics about the write operations.
@@ -259,6 +261,7 @@ impl<W: AsyncSliceWriter> AsyncSliceWriter for TrackingSliceWriter<W> {
 
 /// A future that measures the time spent until it is ready.
 #[pin_project]
+#[derive(Debug)]
 pub struct AggregateStats<'a, F> {
     #[pin]
     inner: F,
@@ -295,6 +298,7 @@ impl<'a, F: Future> Future for AggregateStats<'a, F> {
 
 /// A future that measures the time spent until it is ready, and the size of the result.
 #[pin_project]
+#[derive(Debug)]
 pub struct AggregateSizeAndStats<'a, F> {
     #[pin]
     inner: F,
@@ -370,6 +374,15 @@ mod tests {
         assert_eq!(writer.stats().write_bytes.size, 3);
         assert_eq!(writer.stats().write_bytes.stats.count, 1);
         assert_eq!(writer.stats().sync.count, 1);
+    }
+
+    #[tokio::test]
+    async fn tracking_stream_reader() {
+        let mut writer = TrackingStreamReader::new(Bytes::from(vec![0, 1, 2, 3]));
+        writer.read(2).await.unwrap();
+        writer.read(3).await.unwrap();
+        assert_eq!(writer.stats().read.size, 4); // not 5, because the last read was only 2 bytes
+        assert_eq!(writer.stats().read.stats.count, 2);
     }
 
     #[tokio::test]
