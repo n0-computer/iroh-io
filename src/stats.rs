@@ -138,6 +138,11 @@ impl<W> TrackingStreamWriter<W> {
     pub fn stats(&self) -> StreamWriterStats {
         self.stats
     }
+
+    /// Get the inner writer.
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
 }
 
 impl<W: AsyncStreamWriter> AsyncStreamWriter for TrackingStreamWriter<W> {
@@ -221,6 +226,11 @@ impl<W> TrackingStreamReader<W> {
     pub fn stats(&self) -> StreamReaderStats {
         self.stats
     }
+
+    /// Get the inner writer.
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
 }
 
 impl<W: AsyncStreamReader> AsyncStreamReader for TrackingStreamReader<W> {
@@ -284,6 +294,11 @@ impl<R: AsyncSliceReader> TrackingSliceReader<R> {
     /// Get the statistics about the read operations.
     pub fn stats(&self) -> SliceReaderStats {
         self.stats
+    }
+
+    /// Get the inner reader.
+    pub fn into_inner(self) -> R {
+        self.inner
     }
 }
 
@@ -360,6 +375,11 @@ impl<W> TrackingSliceWriter<W> {
     /// Get the statistics about the write operations.
     pub fn stats(&self) -> SliceWriterStats {
         self.stats
+    }
+
+    /// Get the inner writer.
+    pub fn into_inner(self) -> W {
+        self.inner
     }
 }
 
