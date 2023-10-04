@@ -209,10 +209,12 @@ impl<T: AsyncSliceWriter> AsyncSliceWriter for Box<T> {
 /// A non seekable reader, e.g. a network socket.
 pub trait AsyncStreamReader {
     /// Future returned by read
-    type ReadFuture<'a>: Future<Output = io::Result<Bytes>> + 'a
+    type ReadFuture<'a>: Future<Output = io::Result<Bytes>> + Unpin + 'a
     where
         Self: 'a;
     /// Read at most `len` bytes. To read to the end, pass u64::MAX.
+    ///
+    /// The only reason to return fewer bytes than requested is EOF.
     ///
     /// returns an empty buffer to indicate EOF.
     fn read(&mut self, len: usize) -> Self::ReadFuture<'_>;
@@ -232,6 +234,83 @@ impl AsyncStreamReader for Bytes {
     fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
         let res = self.split_to(len.min(Bytes::len(self)));
         futures::future::ok(res)
+    }
+}
+
+/// Extension trait for [AsyncStreamReader].
+pub trait AsyncStreamReaderExt: AsyncStreamReader + Sized {
+    /// Read exactly `len` bytes.
+    fn read_exact(&mut self, len: usize) -> async_stream_reader_ext::ReadExactFuture<'_, Self> {
+        async_stream_reader_ext::ReadExactFuture {
+            inner: self.read(len),
+            len,
+        }
+    }
+
+    /// Read exactly `N` bytes and return them as an array.
+    fn read_array<const N: usize>(
+        &mut self,
+    ) -> async_stream_reader_ext::ReadArrayFuture<'_, N, Self> {
+        async_stream_reader_ext::ReadArrayFuture {
+            inner: self.read_exact(N),
+        }
+    }
+}
+
+/// Futures for [AsyncStreamReaderExt]
+pub mod async_stream_reader_ext {
+    use futures::FutureExt;
+
+    use super::*;
+
+    impl<T: AsyncStreamReader> AsyncStreamReaderExt for T {}
+
+    /// Future returned by read_exact
+    #[pin_project::pin_project]
+    pub struct ReadExactFuture<'a, S: AsyncStreamReader + 'a> {
+        pub(super) inner: S::ReadFuture<'a>,
+        pub(super) len: usize,
+    }
+
+    impl<'a, S: AsyncStreamReader> Future for ReadExactFuture<'a, S> {
+        type Output = io::Result<Bytes>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            let this = self.project();
+            let res = futures::ready!(this.inner.poll_unpin(cx))?;
+            if res.len() == *this.len {
+                std::task::Poll::Ready(Ok(res))
+            } else {
+                std::task::Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                )))
+            }
+        }
+    }
+
+    /// Future returned by read_array
+    #[pin_project::pin_project]
+    pub struct ReadArrayFuture<'a, const N: usize, S: AsyncStreamReader + 'a> {
+        pub(super) inner: ReadExactFuture<'a, S>,
+    }
+
+    impl<'a, const N: usize, S: AsyncStreamReader + 'a> Future for ReadArrayFuture<'a, N, S> {
+        type Output = io::Result<[u8; N]>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            let this = self.project();
+            let res = futures::ready!(this.inner.poll_unpin(cx))?;
+            let mut array = [0u8; N];
+            array.copy_from_slice(&res);
+            std::task::Poll::Ready(Ok(array))
+        }
     }
 }
 

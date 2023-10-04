@@ -1,5 +1,5 @@
 //! Blocking io for [std::fs::File], using the tokio blocking task pool.
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::LocalBoxFuture, Future, FutureExt};
 use pin_project::pin_project;
 use std::{
@@ -343,7 +343,19 @@ pub mod concatenate_slice_writer {
 
 /// Utility to convert a [tokio::io::AsyncWrite] into an [AsyncStreamWriter].
 #[derive(Debug, Clone)]
-pub struct TokioStreamWriter<T>(pub T);
+pub struct TokioStreamWriter<T>(T);
+
+impl<T: tokio::io::AsyncWrite + Unpin> TokioStreamWriter<T> {
+    /// Create a new [TokioStreamWriter] from an inner writer
+    pub fn new(inner: T) -> Self {
+        Self(inner)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
 
 impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T> {
     type WriteFuture<'a> = tokio_stream_writer::Write<'a, T> where Self: 'a;
@@ -367,7 +379,25 @@ impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T
 
 /// Utility to convert a [tokio::io::AsyncRead] into an [AsyncStreamReader].
 #[derive(Debug, Clone)]
-pub struct TokioStreamReader<T>(T);
+pub struct TokioStreamReader<T> {
+    inner: T,
+    buf: BytesMut,
+}
+
+impl<T: tokio::io::AsyncRead + Unpin> TokioStreamReader<T> {
+    /// Create a new [TokioStreamReader] from an inner writer
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            buf: BytesMut::new(),
+        }
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+}
 
 impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T> {
     type ReadFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>
@@ -375,10 +405,24 @@ impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T>
         Self: 'a;
 
     fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
+        // todo: turn this into a non boxed future
+        // sadly I think that would require unsafe, since read_buf requires unsafe
         async move {
-            let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
-            (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
-            Ok(buf.into())
+            if len == 0 {
+                return Ok(Bytes::new());
+            }
+            // precondition: inner buf is empty and has enough space
+            // an empty BytesMut uas usize::MAX "space", that should be enough...
+            debug_assert!(self.buf.is_empty());
+            debug_assert!(self.buf.remaining_mut() >= len);
+            let mut limited = (&mut self.buf).limit(len);
+            while limited.has_remaining_mut() {
+                let n = self.inner.read_buf(&mut limited).await?;
+                if n == 0 {
+                    break;
+                }
+            }
+            Ok(self.buf.split().freeze())
         }
         .boxed_local()
     }
