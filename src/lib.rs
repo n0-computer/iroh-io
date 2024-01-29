@@ -802,7 +802,7 @@ mod tests {
         println!("serving from {}", url);
         let url = reqwest::Url::parse(&url).unwrap();
         let server = tokio::spawn(server);
-        let mut reader = HttpAdapter::new(url).await.unwrap();
+        let mut reader = HttpAdapter::new(url);
         let len = reader.len().await.unwrap();
         assert_eq!(len, 11);
         println!("len: {:?}", reader);
@@ -855,7 +855,7 @@ mod tests {
                 let server = tokio::spawn(server);
                 // create a resource from the server
                 let url = reqwest::Url::parse(&format!("http://{}", addr)).unwrap();
-                let file = HttpAdapter::new(url).await.unwrap();
+                let file = HttpAdapter::new(url);
                 // run the test
                 read_op_test(ops, file, &data).await.unwrap();
                 // stop the server

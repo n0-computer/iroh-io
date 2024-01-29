@@ -30,22 +30,20 @@ impl fmt::Debug for HttpAdapter {
 
 impl HttpAdapter {
     /// Creates a new [`HttpAdapter`] from a URL
-    pub async fn new(url: Url) -> io::Result<Self> {
-        Self::with_opts(url, Default::default()).await
+    pub fn new(url: Url) -> Self {
+        Self::with_opts(url, Default::default())
     }
 
     /// Creates a new [`HttpAdapter`] from a URL and options
-    pub async fn with_opts(url: Url, opts: http_adapter::Opts) -> io::Result<Self> {
+    pub fn with_opts(url: Url, opts: http_adapter::Opts) -> Self {
         let client = reqwest::Client::new();
 
-        let mut res = Self {
+        Self {
             client,
             opts,
             url,
             size: None,
-        };
-        res.len().await?;
-        Ok(res)
+        }
     }
 
     async fn head_request(&self) -> Result<reqwest::Response, reqwest::Error> {
@@ -151,6 +149,7 @@ pub mod http_adapter {
     #[derive(Debug, Clone, Default)]
     pub struct Opts {
         pub(crate) headers: Option<HeaderMap<HeaderValue>>,
+        pub(crate) client: Option<reqwest::Client>,
     }
 
     impl AsyncSliceReader for HttpAdapter {

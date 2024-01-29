@@ -22,7 +22,7 @@ tokio-util = { version = "0.7", default-features = false, optional = true }
 http = ["reqwest"]
 tokio-io = ["tokio", "smallvec"]
 stats = []
-default = ["tokio-io"]
+default = ["tokio-io", "http"]
 
 [package.metadata.docs.rs]
 features = ["http", "tokio-io", "stats"]
