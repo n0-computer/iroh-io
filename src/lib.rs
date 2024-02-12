@@ -226,9 +226,9 @@ pub use tokio_io::*;
 #[cfg(feature = "stats")]
 pub mod stats;
 
-#[cfg(feature = "http")]
+#[cfg(feature = "x-http")]
 mod http;
-#[cfg(feature = "http")]
+#[cfg(feature = "x-http")]
 pub use http::*;
 
 /// implementations for [AsyncSliceReader] and [AsyncSliceWriter] for [bytes::Bytes] and [bytes::BytesMut]
@@ -344,7 +344,7 @@ where
     }
 }
 
-#[cfg(any(feature = "tokio-io", feature = "http"))]
+#[cfg(any(feature = "tokio-io", feature = "x-http"))]
 fn make_io_error<E>(e: E) -> io::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -360,13 +360,13 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use proptest::prelude::*;
-    use std::io;
+    use std::{fmt::Debug, io};
 
     #[cfg(feature = "tokio-io")]
     use std::io::Write;
 
     /// A test server that serves data on a random port, supporting head, get, and range requests
-    #[cfg(feature = "http")]
+    #[cfg(feature = "x-http")]
     mod test_server {
         use super::*;
         use axum::{routing::get, Extension, Router};
@@ -393,9 +393,16 @@ mod tests {
             if let Some(range_header) = req.headers().get("Range") {
                 if let Ok(range) = parse_range_header(range_header.to_str().unwrap()) {
                     // Extract the requested range from the data
-                    let start = range.start;
+                    let start = range.start.min(data.len());
                     let end = range.end.min(data.len());
                     let sliced_data = &data[start..end];
+                    if start == end {
+                        return Response::builder()
+                            .header("Content-Type", "application/octet-stream")
+                            .status(StatusCode::NO_CONTENT)
+                            .body(Body::from(vec![]))
+                            .unwrap();
+                    }
 
                     // Create a partial response with the sliced data
                     return Response::builder()
@@ -653,7 +660,7 @@ mod tests {
         io::Result::Ok(())
     }
 
-    async fn read_op_test<R: AsyncSliceReader>(
+    async fn read_op_test<R: AsyncSliceReader + Debug>(
         ops: Vec<ReadOp>,
         mut file: R,
         actual: &[u8],
@@ -662,6 +669,7 @@ mod tests {
         for op in ops {
             match op {
                 ReadOp::ReadAt(offset, len) => {
+                    println!("{:?} {} {}", file, offset, len);
                     let data = AsyncSliceReader::read_at(&mut file, offset, len).await?;
                     assert_eq!(&data, &actual[limited_range(offset, len, actual.len())]);
                     current = offset.checked_add(len as u64).unwrap();
@@ -685,7 +693,7 @@ mod tests {
         io::Result::Ok(())
     }
 
-    // #[cfg(feature = "http")]
+    // #[cfg(feature = "x-http")]
     // #[tokio::test]
     // async fn test_http_range() -> io::Result<()> {
     //     let url = reqwest::Url::parse("https://ipfs.io/ipfs/bafybeiaj2dgwpi6bsisyf4wq7yvj4lqvpbmlmztm35hqyqqjihybnden24/image").unwrap();
@@ -697,7 +705,7 @@ mod tests {
     //     Ok(())
     // }
 
-    #[cfg(feature = "http")]
+    #[cfg(feature = "x-http")]
     #[tokio::test]
     #[cfg_attr(target_os = "windows", ignore)]
     async fn http_smoke() {
@@ -706,7 +714,7 @@ mod tests {
         println!("serving from {}", url);
         let url = reqwest::Url::parse(&url).unwrap();
         let server = tokio::spawn(server);
-        let mut reader = HttpAdapter::new(url).await.unwrap();
+        let mut reader = HttpAdapter::new(url);
         let len = reader.len().await.unwrap();
         assert_eq!(len, 11);
         println!("len: {:?}", reader);
@@ -748,7 +756,7 @@ mod tests {
             async_test(read_op_test(ops, File::from_std(file), &data)).unwrap();
         }
 
-        #[cfg(feature = "http")]
+        #[cfg(feature = "x-http")]
         #[cfg_attr(target_os = "windows", ignore)]
         #[test]
         fn http_read(data in proptest::collection::vec(any::<u8>(), 0..10), ops in random_read_ops(10, 10, 2)) {
@@ -759,7 +767,7 @@ mod tests {
                 let server = tokio::spawn(server);
                 // create a resource from the server
                 let url = reqwest::Url::parse(&format!("http://{}", addr)).unwrap();
-                let file = HttpAdapter::new(url).await.unwrap();
+                let file = HttpAdapter::new(url);
                 // run the test
                 read_op_test(ops, file, &data).await.unwrap();
                 // stop the server

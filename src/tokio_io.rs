@@ -59,7 +59,7 @@ impl File {
     }
 }
 
-/// Futures for the [File]
+/// Support for the [File]
 pub mod file {
     use bytes::Bytes;
 
@@ -270,13 +270,6 @@ impl<W: AsyncWrite + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWrite
     }
 }
 
-/// Futures for [ConcatenateSliceWriter].
-pub mod concatenate_slice_writer {
-    use super::*;
-
-    pub use tokio_helper::{Flush as Sync, Write as WriteAt, WriteBytes as WriteBytesAt};
-}
-
 /// Utility to convert a [tokio::io::AsyncWrite] into an [AsyncStreamWriter].
 #[derive(Debug, Clone)]
 pub struct TokioStreamWriter<T>(pub T);
@@ -305,13 +298,6 @@ impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T>
         (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
         Ok(buf.into())
     }
-}
-
-/// Futures for [TokioStreamWriter].
-pub mod tokio_stream_writer {
-    use super::*;
-
-    pub use tokio_helper::{Flush as Sync, Write, WriteBytes};
 }
 
 /// Futures copied from tokio, because they are private in tokio
