@@ -19,14 +19,15 @@ smallvec = { version = "1", default-features = false, optional = true }
 tokio = { version = "1", features = ["io-util", "rt"], optional = true }
 tokio-util = { version = "0.7", default-features = false, optional = true }
 
+# x- features are experimental and have no expectation of API stability whatsoever. Use at your own risk.
 [features]
-http = ["reqwest"]
+x-http = ["reqwest"]
 tokio-io = ["tokio", "smallvec"]
 stats = []
-default = ["tokio-io", "http"]
+default = ["tokio-io", "x-http"]
 
 [package.metadata.docs.rs]
-features = ["http", "tokio-io", "stats"]
+features = ["x-http", "tokio-io", "stats"]
 
 [dev-dependencies]
 axum = { version = "0.6" }
