@@ -360,7 +360,7 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use proptest::prelude::*;
-    use std::io;
+    use std::{fmt::Debug, io};
 
     #[cfg(feature = "tokio-io")]
     use std::io::Write;
@@ -393,9 +393,16 @@ mod tests {
             if let Some(range_header) = req.headers().get("Range") {
                 if let Ok(range) = parse_range_header(range_header.to_str().unwrap()) {
                     // Extract the requested range from the data
-                    let start = range.start;
+                    let start = range.start.min(data.len());
                     let end = range.end.min(data.len());
                     let sliced_data = &data[start..end];
+                    if start == end {
+                        return Response::builder()
+                            .header("Content-Type", "application/octet-stream")
+                            .status(StatusCode::NO_CONTENT)
+                            .body(Body::from(vec![]))
+                            .unwrap();
+                    }
 
                     // Create a partial response with the sliced data
                     return Response::builder()
@@ -653,7 +660,7 @@ mod tests {
         io::Result::Ok(())
     }
 
-    async fn read_op_test<R: AsyncSliceReader>(
+    async fn read_op_test<R: AsyncSliceReader + Debug>(
         ops: Vec<ReadOp>,
         mut file: R,
         actual: &[u8],
@@ -662,6 +669,7 @@ mod tests {
         for op in ops {
             match op {
                 ReadOp::ReadAt(offset, len) => {
+                    println!("{:?} {} {}", file, offset, len);
                     let data = AsyncSliceReader::read_at(&mut file, offset, len).await?;
                     assert_eq!(&data, &actual[limited_range(offset, len, actual.len())]);
                     current = offset.checked_add(len as u64).unwrap();

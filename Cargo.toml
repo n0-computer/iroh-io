@@ -24,7 +24,7 @@ tokio-util = { version = "0.7", default-features = false, optional = true }
 x-http = ["reqwest"]
 tokio-io = ["tokio", "smallvec"]
 stats = []
-default = ["tokio-io", "x-http"]
+default = ["tokio-io"]
 
 [package.metadata.docs.rs]
 features = ["x-http", "tokio-io", "stats"]
