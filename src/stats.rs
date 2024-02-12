@@ -7,11 +7,13 @@
 //! Statistics are always added using saturating arithmetic, so there can't be
 //! a panic even in unlikely scenarios.
 use std::{
+    io,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
+use bytes::Bytes;
 use futures::prelude::*;
 use pin_project::pin_project;
 
@@ -141,16 +143,13 @@ impl<W> TrackingStreamWriter<W> {
 }
 
 impl<W: AsyncStreamWriter> AsyncStreamWriter for TrackingStreamWriter<W> {
-    type WriteFuture<'a> = AggregateStats<'a, W::WriteFuture<'a>> where Self: 'a;
-
-    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         // increase the size by the length of the data, even if the write fails
         self.stats.write.size = self.stats.write.size.saturating_add(data.len() as u64);
-        AggregateStats::new(self.inner.write(data), &mut self.stats.write.stats)
+        AggregateStats::new(self.inner.write(data), &mut self.stats.write.stats).await
     }
 
-    type WriteBytesFuture<'a> = AggregateStats<'a, W::WriteBytesFuture<'a>> where Self: 'a;
-    fn write_bytes(&mut self, data: bytes::Bytes) -> Self::WriteBytesFuture<'_> {
+    async fn write_bytes(&mut self, data: bytes::Bytes) -> io::Result<()> {
         // increase the size by the length of the data, even if the write fails
         self.stats.write_bytes.size = self
             .stats
@@ -161,12 +160,11 @@ impl<W: AsyncStreamWriter> AsyncStreamWriter for TrackingStreamWriter<W> {
             self.inner.write_bytes(data),
             &mut self.stats.write_bytes.stats,
         )
+        .await
     }
 
-    type SyncFuture<'a> = AggregateStats<'a, W::SyncFuture<'a>> where Self: 'a;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        AggregateStats::new(self.inner.sync(), &mut self.stats.sync)
+    async fn sync(&mut self) -> io::Result<()> {
+        AggregateStats::new(self.inner.sync(), &mut self.stats.sync).await
     }
 }
 
@@ -224,10 +222,8 @@ impl<W> TrackingStreamReader<W> {
 }
 
 impl<W: AsyncStreamReader> AsyncStreamReader for TrackingStreamReader<W> {
-    type ReadFuture<'a> = AggregateSizeAndStats<'a, W::ReadFuture<'a>> where Self: 'a;
-
-    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
-        AggregateSizeAndStats::new(self.inner.read(len), &mut self.stats.read)
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        AggregateSizeAndStats::new(self.inner.read(len), &mut self.stats.read).await
     }
 }
 
@@ -288,16 +284,12 @@ impl<R: AsyncSliceReader> TrackingSliceReader<R> {
 }
 
 impl<R: AsyncSliceReader> AsyncSliceReader for TrackingSliceReader<R> {
-    type ReadAtFuture<'a> = AggregateSizeAndStats<'a, R::ReadAtFuture<'a>> where Self: 'a;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        AggregateSizeAndStats::new(self.inner.read_at(offset, len), &mut self.stats.read_at)
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        AggregateSizeAndStats::new(self.inner.read_at(offset, len), &mut self.stats.read_at).await
     }
 
-    type LenFuture<'a> = AggregateStats<'a, R::LenFuture<'a>> where Self: 'a;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        AggregateStats::new(self.inner.len(), &mut self.stats.len)
+    async fn len(&mut self) -> io::Result<u64> {
+        AggregateStats::new(self.inner.len(), &mut self.stats.len).await
     }
 }
 
@@ -364,20 +356,17 @@ impl<W> TrackingSliceWriter<W> {
 }
 
 impl<W: AsyncSliceWriter> AsyncSliceWriter for TrackingSliceWriter<W> {
-    type WriteAtFuture<'a> = AggregateStats<'a, W::WriteAtFuture<'a>> where Self: 'a;
-
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         // increase the size by the length of the data, even if the write fails
         self.stats.write_at.size = self.stats.write_at.size.saturating_add(data.len() as u64);
         AggregateStats::new(
             self.inner.write_at(offset, data),
             &mut self.stats.write_at.stats,
         )
+        .await
     }
 
-    type WriteBytesAtFuture<'a> = AggregateStats<'a, W::WriteBytesAtFuture<'a>> where Self: 'a;
-
-    fn write_bytes_at(&mut self, offset: u64, data: bytes::Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: bytes::Bytes) -> io::Result<()> {
         // increase the size by the length of the data, even if the write fails
         self.stats.write_bytes_at.size = self
             .stats
@@ -388,18 +377,15 @@ impl<W: AsyncSliceWriter> AsyncSliceWriter for TrackingSliceWriter<W> {
             self.inner.write_bytes_at(offset, data),
             &mut self.stats.write_bytes_at.stats,
         )
+        .await
     }
 
-    type SetLenFuture<'a> = AggregateStats<'a, W::SetLenFuture<'a>> where Self: 'a;
-
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
-        AggregateStats::new(self.inner.set_len(len), &mut self.stats.set_len)
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
+        AggregateStats::new(self.inner.set_len(len), &mut self.stats.set_len).await
     }
 
-    type SyncFuture<'a> = AggregateStats<'a, W::SyncFuture<'a>> where Self: 'a;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        AggregateStats::new(self.inner.sync(), &mut self.stats.sync)
+    async fn sync(&mut self) -> io::Result<()> {
+        AggregateStats::new(self.inner.sync(), &mut self.stats.sync).await
     }
 }
 

@@ -38,7 +38,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 use bytes::Bytes;
-use futures::{future::Either, Future};
+use futures::Future;
 use std::io;
 
 /// A trait to abstract async reading from different resource.
@@ -52,10 +52,6 @@ use std::io;
 /// See xRead, xFileSize in <https://www.sqlite.org/c3ref/io_methods.html>
 #[allow(clippy::len_without_is_empty)]
 pub trait AsyncSliceReader {
-    /// The future returned by read_at
-    type ReadAtFuture<'a>: Future<Output = io::Result<Bytes>> + 'a
-    where
-        Self: 'a;
     /// Read the entire buffer at the given position.
     ///
     /// Will return at most `len` bytes, but may return fewer if the resource is smaller.
@@ -64,48 +60,39 @@ pub trait AsyncSliceReader {
     /// It will never return an io error independent of the range as long as the underlying
     /// resource is valid.
     #[must_use = "io futures must be polled to completion"]
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_>;
+    fn read_at(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>>;
 
-    /// The future returned by len
-    type LenFuture<'a>: Future<Output = io::Result<u64>> + 'a
-    where
-        Self: 'a;
     /// Get the length of the resource
     #[must_use = "io futures must be polled to completion"]
-    fn len(&mut self) -> Self::LenFuture<'_>;
+    fn len(&mut self) -> impl Future<Output = io::Result<u64>>;
 }
 
 impl<'b, T: AsyncSliceReader> AsyncSliceReader for &'b mut T {
-    type ReadAtFuture<'a> = T::ReadAtFuture<'a> where T: 'a, 'b: 'a;
-    type LenFuture<'a> = T::LenFuture<'a> where T: 'a, 'b: 'a;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        (**self).read_at(offset, len)
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        (**self).read_at(offset, len).await
     }
 
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        (**self).len()
+    async fn len(&mut self) -> io::Result<u64> {
+        (**self).len().await
     }
 }
 
 impl<T: AsyncSliceReader> AsyncSliceReader for Box<T> {
-    type ReadAtFuture<'a> = T::ReadAtFuture<'a> where T: 'a;
-    type LenFuture<'a> = T::LenFuture<'a> where T: 'a;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        (**self).read_at(offset, len)
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        (**self).read_at(offset, len).await
     }
 
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        (**self).len()
+    async fn len(&mut self) -> io::Result<u64> {
+        (**self).len().await
     }
 }
 
 /// Extension trait for [AsyncSliceReader].
 pub trait AsyncSliceReaderExt: AsyncSliceReader {
     /// Read the entire resource into a [bytes::Bytes] buffer, if possible.
-    fn read_to_end(&mut self) -> Self::ReadAtFuture<'_> {
-        self.read_at(0, usize::MAX)
+    #[allow(async_fn_in_trait)]
+    async fn read_to_end(&mut self) -> io::Result<Bytes> {
+        self.read_at(0, usize::MAX).await
     }
 }
 
@@ -121,185 +108,114 @@ impl<T: AsyncSliceReader> AsyncSliceReaderExt for T {}
 /// This is similar to the io interface of sqlite.
 /// See xWrite in <https://www.sqlite.org/c3ref/io_methods.html>
 pub trait AsyncSliceWriter: Sized {
-    /// The future returned by write_at
-    type WriteAtFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Write the entire slice at the given position.
     ///
     /// if self.len < offset + data.len(), the underlying resource will be extended.
     /// if self.len < offset, the gap will be filled with zeros.
     #[must_use = "io futures must be polled to completion"]
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> impl Future<Output = io::Result<()>>;
 
-    /// The future returned by write_bytes_at
-    type WriteBytesAtFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Write the entire Bytes at the given position.
     ///
     /// Use this if you have a Bytes, to avoid allocations.
     /// Other than that it is equivalent to [AsyncSliceWriter::write_at].
     #[must_use = "io futures must be polled to completion"]
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> impl Future<Output = io::Result<()>>;
 
-    /// The future returned by set_len
-    type SetLenFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Set the length of the underlying storage.
     #[must_use = "io futures must be polled to completion"]
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_>;
+    fn set_len(&mut self, len: u64) -> impl Future<Output = io::Result<()>>;
 
-    /// The future returned by sync
-    type SyncFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Sync any buffers to the underlying storage.
     #[must_use = "io futures must be polled to completion"]
-    fn sync(&mut self) -> Self::SyncFuture<'_>;
+    fn sync(&mut self) -> impl Future<Output = io::Result<()>>;
 }
 
 impl<'b, T: AsyncSliceWriter> AsyncSliceWriter for &'b mut T {
-    type WriteAtFuture<'a> = T::WriteAtFuture<'a> where T: 'a, 'b: 'a;
-    type WriteBytesAtFuture<'a> = T::WriteBytesAtFuture<'a> where T: 'a, 'b: 'a;
-    type SetLenFuture<'a> = T::SetLenFuture<'a> where T: 'a, 'b: 'a;
-    type SyncFuture<'a> = T::SyncFuture<'a> where T: 'a, 'b: 'a;
-
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
-        (**self).write_at(offset, data)
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        (**self).write_at(offset, data).await
     }
 
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        (**self).write_bytes_at(offset, data)
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+        (**self).write_bytes_at(offset, data).await
     }
 
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
-        (**self).set_len(len)
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
+        (**self).set_len(len).await
     }
 
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        (**self).sync()
+    async fn sync(&mut self) -> io::Result<()> {
+        (**self).sync().await
     }
 }
 
 impl<T: AsyncSliceWriter> AsyncSliceWriter for Box<T> {
-    type WriteAtFuture<'a> = T::WriteAtFuture<'a> where T: 'a;
-    type WriteBytesAtFuture<'a> = T::WriteBytesAtFuture<'a> where T: 'a;
-    type SetLenFuture<'a> = T::SetLenFuture<'a> where T: 'a;
-    type SyncFuture<'a> = T::SyncFuture<'a> where T: 'a;
-
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
-        (**self).write_at(offset, data)
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        (**self).write_at(offset, data).await
     }
 
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        (**self).write_bytes_at(offset, data)
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+        (**self).write_bytes_at(offset, data).await
     }
 
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
-        (**self).set_len(len)
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
+        (**self).set_len(len).await
     }
 
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        (**self).sync()
+    async fn sync(&mut self) -> io::Result<()> {
+        (**self).sync().await
     }
 }
 
 /// A non seekable reader, e.g. a network socket.
 pub trait AsyncStreamReader {
-    /// Future returned by read
-    type ReadFuture<'a>: Future<Output = io::Result<Bytes>> + 'a
-    where
-        Self: 'a;
     /// Read at most `len` bytes. To read to the end, pass u64::MAX.
     ///
     /// returns an empty buffer to indicate EOF.
-    fn read(&mut self, len: usize) -> Self::ReadFuture<'_>;
+    fn read(&mut self, len: usize) -> impl Future<Output = io::Result<Bytes>>;
 }
 
 impl<T: AsyncStreamReader> AsyncStreamReader for &mut T {
-    type ReadFuture<'a> = T::ReadFuture<'a> where Self: 'a;
-
-    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
-        (**self).read(len)
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        (**self).read(len).await
     }
 }
 
 impl AsyncStreamReader for Bytes {
-    type ReadFuture<'a> = futures::future::Ready<io::Result<Bytes>>;
-
-    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
         let res = self.split_to(len.min(Bytes::len(self)));
-        futures::future::ok(res)
+        Ok(res)
     }
 }
 
 /// A non seekable writer, e.g. a network socket.
 pub trait AsyncStreamWriter {
-    /// Future returned by write
-    type WriteFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Write the entire slice.
     ///
     /// In case of an error, some bytes may have been written.
-    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a>;
+    fn write(&mut self, data: &[u8]) -> impl Future<Output = io::Result<()>>;
 
-    /// Future returned by write
-    type WriteBytesFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Write the entire bytes.
     ///
     /// In case of an error, some bytes may have been written.
-    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_>;
+    fn write_bytes(&mut self, data: Bytes) -> impl Future<Output = io::Result<()>>;
 
-    /// Future returned by sync
-    type SyncFuture<'a>: Future<Output = io::Result<()>> + 'a
-    where
-        Self: 'a;
     /// Sync any buffers to the underlying storage.
-    fn sync(&mut self) -> Self::SyncFuture<'_>;
+    fn sync(&mut self) -> impl Future<Output = io::Result<()>>;
 }
 
 impl<T: AsyncStreamWriter> AsyncStreamWriter for &mut T {
-    type WriteFuture<'a> = T::WriteFuture<'a> where Self: 'a;
-
-    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
-        (**self).write(data)
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).write(data).await
     }
 
-    type SyncFuture<'a> = T::SyncFuture<'a> where Self: 'a;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        (**self).sync()
+    async fn sync(&mut self) -> io::Result<()> {
+        (**self).sync().await
     }
 
-    type WriteBytesFuture<'a> = T::WriteBytesFuture<'a> where Self: 'a;
-
-    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
-        (**self).write_bytes(data)
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        (**self).write_bytes(data).await
     }
-}
-
-#[cfg(any(feature = "tokio-io", feature = "http"))]
-/// A macro to create a newtype wrapper for a future, to hide the underlying type.
-macro_rules! newtype_future {
-    ($(#[$outer:meta])* $name:ident, $inner:ty, $output:ty) => {
-        #[repr(transparent)]
-        #[pin_project::pin_project]
-        #[must_use]
-        $(#[$outer])*
-        pub struct $name<'a>(#[pin] $inner);
-
-        impl<'a> futures::Future for $name<'a> {
-            type Output = $output;
-            fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-                self.project().0.poll(cx)
-            }
-        }
-    };
 }
 
 #[cfg(feature = "tokio-io")]
@@ -323,19 +239,17 @@ where
     L: AsyncSliceReader + 'static,
     R: AsyncSliceReader + 'static,
 {
-    type ReadAtFuture<'a> = Either<L::ReadAtFuture<'a>, R::ReadAtFuture<'a>>;
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.read_at(offset, len)),
-            futures::future::Either::Right(r) => Either::Right(r.read_at(offset, len)),
+            Self::Left(l) => l.read_at(offset, len).await,
+            Self::Right(r) => r.read_at(offset, len).await,
         }
     }
 
-    type LenFuture<'a> = Either<L::LenFuture<'a>, R::LenFuture<'a>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.len()),
-            futures::future::Either::Right(r) => Either::Right(r.len()),
+            Self::Left(l) => l.len().await,
+            Self::Right(r) => r.len().await,
         }
     }
 }
@@ -345,35 +259,31 @@ where
     L: AsyncSliceWriter + 'static,
     R: AsyncSliceWriter + 'static,
 {
-    type WriteBytesAtFuture<'a> = Either<L::WriteBytesAtFuture<'a>, R::WriteBytesAtFuture<'a>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.write_bytes_at(offset, data)),
-            futures::future::Either::Right(r) => Either::Right(r.write_bytes_at(offset, data)),
+            Self::Left(l) => l.write_bytes_at(offset, data).await,
+            Self::Right(r) => r.write_bytes_at(offset, data).await,
         }
     }
 
-    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.write_at(offset, data)),
-            futures::future::Either::Right(r) => Either::Right(r.write_at(offset, data)),
+            Self::Left(l) => l.write_at(offset, data).await,
+            Self::Right(r) => r.write_at(offset, data).await,
         }
     }
 
-    type SyncFuture<'a> = Either<L::SyncFuture<'a>, R::SyncFuture<'a>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
+    async fn sync(&mut self) -> io::Result<()> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.sync()),
-            futures::future::Either::Right(r) => Either::Right(r.sync()),
+            Self::Left(l) => l.sync().await,
+            Self::Right(r) => r.sync().await,
         }
     }
 
-    type SetLenFuture<'a> = Either<L::SetLenFuture<'a>, R::SetLenFuture<'a>>;
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         match self {
-            futures::future::Either::Left(l) => Either::Left(l.set_len(len)),
-            futures::future::Either::Right(r) => Either::Right(r.set_len(len)),
+            Self::Left(l) => l.set_len(len).await,
+            Self::Right(r) => r.set_len(len).await,
         }
     }
 }
@@ -384,19 +294,17 @@ where
     L: AsyncSliceReader + 'static,
     R: AsyncSliceReader + 'static,
 {
-    type ReadAtFuture<'a> = Either<L::ReadAtFuture<'a>, R::ReadAtFuture<'a>>;
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.read_at(offset, len)),
-            tokio_util::either::Either::Right(r) => Either::Right(r.read_at(offset, len)),
+            Self::Left(l) => l.read_at(offset, len).await,
+            Self::Right(r) => r.read_at(offset, len).await,
         }
     }
 
-    type LenFuture<'a> = Either<L::LenFuture<'a>, R::LenFuture<'a>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.len()),
-            tokio_util::either::Either::Right(r) => Either::Right(r.len()),
+            Self::Left(l) => l.len().await,
+            Self::Right(r) => r.len().await,
         }
     }
 }
@@ -407,35 +315,31 @@ where
     L: AsyncSliceWriter + 'static,
     R: AsyncSliceWriter + 'static,
 {
-    type WriteBytesAtFuture<'a> = Either<L::WriteBytesAtFuture<'a>, R::WriteBytesAtFuture<'a>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.write_bytes_at(offset, data)),
-            tokio_util::either::Either::Right(r) => Either::Right(r.write_bytes_at(offset, data)),
+            Self::Left(l) => l.write_bytes_at(offset, data).await,
+            Self::Right(r) => r.write_bytes_at(offset, data).await,
         }
     }
 
-    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.write_at(offset, data)),
-            tokio_util::either::Either::Right(r) => Either::Right(r.write_at(offset, data)),
+            Self::Left(l) => l.write_at(offset, data).await,
+            Self::Right(r) => r.write_at(offset, data).await,
         }
     }
 
-    type SyncFuture<'a> = Either<L::SyncFuture<'a>, R::SyncFuture<'a>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
+    async fn sync(&mut self) -> io::Result<()> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.sync()),
-            tokio_util::either::Either::Right(r) => Either::Right(r.sync()),
+            Self::Left(l) => l.sync().await,
+            Self::Right(r) => r.sync().await,
         }
     }
 
-    type SetLenFuture<'a> = Either<L::SetLenFuture<'a>, R::SetLenFuture<'a>>;
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         match self {
-            tokio_util::either::Either::Left(l) => Either::Left(l.set_len(len)),
-            tokio_util::either::Either::Right(r) => Either::Right(r.set_len(len)),
+            Self::Left(l) => l.set_len(len).await,
+            Self::Right(r) => r.set_len(len).await,
         }
     }
 }

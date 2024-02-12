@@ -3,7 +3,7 @@
 //! Uses the [reqwest](https://docs.rs/reqwest) crate. Somewhat inspired by
 //! <https://github.com/fasterthanlime/ubio/blob/main/src/http/mod.rs>
 use super::*;
-use futures::{future::LocalBoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Method, StatusCode, Url,
@@ -119,32 +119,6 @@ pub mod http_adapter {
 
     use super::*;
 
-    newtype_future!(
-        /// The future returned by [`HttpAdapter::read_at`]
-        ReadAtFuture,
-        LocalBoxFuture<'a, io::Result<Bytes>>,
-        io::Result<Bytes>
-    );
-
-    impl fmt::Debug for ReadAtFuture<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ReadAtFuture").finish_non_exhaustive()
-        }
-    }
-
-    newtype_future!(
-        /// The future returned by [`HttpAdapter::len`]
-        LenFuture,
-        LocalBoxFuture<'a, io::Result<u64>>,
-        io::Result<u64>
-    );
-
-    impl fmt::Debug for LenFuture<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("LenFuture").finish_non_exhaustive()
-        }
-    }
-
     /// Options for [HttpAdapter]
     #[derive(Debug, Clone, Default)]
     pub struct Opts {
@@ -153,55 +127,40 @@ pub mod http_adapter {
     }
 
     impl AsyncSliceReader for HttpAdapter {
-        type ReadAtFuture<'a> = ReadAtFuture<'a>;
-
-        fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-            ReadAtFuture(
-                async move {
-                    let mut stream = self.get_stream_at(offset, len).await?;
-                    let mut res = BytesMut::with_capacity(len.min(1024));
-                    while let Some(chunk) = stream.next().await {
-                        let chunk = chunk?;
-                        res.extend_from_slice(&chunk);
-                        if BytesMut::len(&res) >= len {
-                            break;
-                        }
-                    }
-                    // we do not want to rely on the server sending the exact amount of bytes
-                    res.truncate(len);
-                    Ok(res.freeze())
+        async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+            let mut stream = self.get_stream_at(offset, len).await?;
+            let mut res = BytesMut::with_capacity(len.min(1024));
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                res.extend_from_slice(&chunk);
+                if BytesMut::len(&res) >= len {
+                    break;
                 }
-                .boxed_local(),
-            )
+            }
+            // we do not want to rely on the server sending the exact amount of bytes
+            res.truncate(len);
+            Ok(res.freeze())
         }
 
-        type LenFuture<'a> = LenFuture<'a>;
-
-        fn len(&mut self) -> Self::LenFuture<'_> {
-            LenFuture(
-                async move {
-                    let io_err = |text: &str| io::Error::new(io::ErrorKind::Other, text);
-                    let head_response = self
-                        .head_request()
-                        .await
-                        .map_err(|_| io_err("head request failed"))?;
-                    if !head_response.status().is_success() {
-                        return Err(io_err("head request failed"));
-                    }
-                    let size = head_response
-                        .headers()
-                        .get("content-length")
-                        .ok_or_else(|| io_err("content-length header missing"))?;
-                    let text = size
-                        .to_str()
-                        .map_err(|_| io_err("content-length malformed"))?;
-                    let size =
-                        u64::from_str(text).map_err(|_| io_err("content-length malformed"))?;
-                    self.size = Some(size);
-                    Ok(size)
-                }
-                .boxed_local(),
-            )
+        async fn len(&mut self) -> io::Result<u64> {
+            let io_err = |text: &str| io::Error::new(io::ErrorKind::Other, text);
+            let head_response = self
+                .head_request()
+                .await
+                .map_err(|_| io_err("head request failed"))?;
+            if !head_response.status().is_success() {
+                return Err(io_err("head request failed"));
+            }
+            let size = head_response
+                .headers()
+                .get("content-length")
+                .ok_or_else(|| io_err("content-length header missing"))?;
+            let text = size
+                .to_str()
+                .map_err(|_| io_err("content-length malformed"))?;
+            let size = u64::from_str(text).map_err(|_| io_err("content-length malformed"))?;
+            self.size = Some(size);
+            Ok(size)
         }
     }
 }

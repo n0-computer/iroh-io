@@ -2,114 +2,95 @@ use crate::AsyncStreamWriter;
 
 use super::{AsyncSliceReader, AsyncSliceWriter};
 use bytes::{Bytes, BytesMut};
-use futures::future;
 use std::io;
 
 impl AsyncSliceReader for bytes::Bytes {
-    type ReadAtFuture<'a> = future::Ready<io::Result<Bytes>>;
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        future::ok(get_limited_slice(self, offset, len))
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        Ok(get_limited_slice(self, offset, len))
     }
 
-    type LenFuture<'a> = future::Ready<io::Result<u64>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        future::ok(Bytes::len(self) as u64)
+    async fn len(&mut self) -> io::Result<u64> {
+        Ok(Bytes::len(self) as u64)
     }
 }
 
 impl AsyncSliceReader for bytes::BytesMut {
-    type ReadAtFuture<'a> = future::Ready<io::Result<Bytes>>;
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        future::ok(copy_limited_slice(self, offset, len))
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        Ok(copy_limited_slice(self, offset, len))
     }
 
-    type LenFuture<'a> = future::Ready<io::Result<u64>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        future::ok(BytesMut::len(self) as u64)
+    async fn len(&mut self) -> io::Result<u64> {
+        Ok(BytesMut::len(self) as u64)
     }
 }
 
 impl AsyncSliceWriter for bytes::BytesMut {
-    type WriteBytesAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        future::ready(write_extend(self, offset, &data))
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+        write_extend(self, offset, &data)
     }
 
-    type WriteAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
-        future::ready(write_extend(self, offset, data))
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        write_extend(self, offset, data)
     }
 
-    type SetLenFuture<'a> = future::Ready<io::Result<()>>;
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         let len = len.try_into().unwrap_or(usize::MAX);
         self.resize(len, 0);
-        future::ok(())
+        Ok(())
     }
 
-    type SyncFuture<'a> = future::Ready<io::Result<()>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
 impl AsyncSliceWriter for Vec<u8> {
-    type WriteBytesAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        future::ready(write_extend_vec(self, offset, &data))
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+        write_extend_vec(self, offset, &data)
     }
 
-    type WriteAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
-        future::ready(write_extend_vec(self, offset, data))
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        write_extend_vec(self, offset, data)
     }
 
-    type SetLenFuture<'a> = future::Ready<io::Result<()>>;
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         let len = len.try_into().unwrap_or(usize::MAX);
         self.resize(len, 0);
-        future::ok(())
+        Ok(())
     }
 
-    type SyncFuture<'a> = future::Ready<io::Result<()>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
 impl AsyncStreamWriter for Vec<u8> {
-    type WriteFuture<'a> = futures::future::Ready<io::Result<()>>;
-    fn write(&mut self, data: &[u8]) -> Self::WriteFuture<'_> {
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         self.extend_from_slice(data);
-        futures::future::ok(())
+        Ok(())
     }
 
-    type WriteBytesFuture<'a> = Self::WriteFuture<'a>;
-    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
-        self.write(&data)
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        self.write(&data).await
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
 impl AsyncStreamWriter for bytes::BytesMut {
-    type WriteFuture<'a> = futures::future::Ready<io::Result<()>>;
-    fn write(&mut self, data: &[u8]) -> Self::WriteFuture<'_> {
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         self.extend_from_slice(data);
-        futures::future::ok(())
+        Ok(())
     }
 
-    type WriteBytesFuture<'a> = Self::WriteFuture<'a>;
-    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
-        self.write(&data)
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        self.write(&data).await
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
