@@ -226,9 +226,9 @@ pub use tokio_io::*;
 #[cfg(feature = "stats")]
 pub mod stats;
 
-#[cfg(feature = "http")]
+#[cfg(feature = "x-http")]
 mod http;
-#[cfg(feature = "http")]
+#[cfg(feature = "x-http")]
 pub use http::*;
 
 /// implementations for [AsyncSliceReader] and [AsyncSliceWriter] for [bytes::Bytes] and [bytes::BytesMut]
@@ -344,7 +344,7 @@ where
     }
 }
 
-#[cfg(any(feature = "tokio-io", feature = "http"))]
+#[cfg(any(feature = "tokio-io", feature = "x-http"))]
 fn make_io_error<E>(e: E) -> io::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -366,7 +366,7 @@ mod tests {
     use std::io::Write;
 
     /// A test server that serves data on a random port, supporting head, get, and range requests
-    #[cfg(feature = "http")]
+    #[cfg(feature = "x-http")]
     mod test_server {
         use super::*;
         use axum::{routing::get, Extension, Router};
@@ -685,7 +685,7 @@ mod tests {
         io::Result::Ok(())
     }
 
-    // #[cfg(feature = "http")]
+    // #[cfg(feature = "x-http")]
     // #[tokio::test]
     // async fn test_http_range() -> io::Result<()> {
     //     let url = reqwest::Url::parse("https://ipfs.io/ipfs/bafybeiaj2dgwpi6bsisyf4wq7yvj4lqvpbmlmztm35hqyqqjihybnden24/image").unwrap();
@@ -697,7 +697,7 @@ mod tests {
     //     Ok(())
     // }
 
-    #[cfg(feature = "http")]
+    #[cfg(feature = "x-http")]
     #[tokio::test]
     #[cfg_attr(target_os = "windows", ignore)]
     async fn http_smoke() {
@@ -748,7 +748,7 @@ mod tests {
             async_test(read_op_test(ops, File::from_std(file), &data)).unwrap();
         }
 
-        #[cfg(feature = "http")]
+        #[cfg(feature = "x-http")]
         #[cfg_attr(target_os = "windows", ignore)]
         #[test]
         fn http_read(data in proptest::collection::vec(any::<u8>(), 0..10), ops in random_read_ops(10, 10, 2)) {

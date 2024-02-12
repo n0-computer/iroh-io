@@ -2,59 +2,58 @@
 //!
 //! Uses the [reqwest](https://docs.rs/reqwest) crate. Somewhat inspired by
 //! <https://github.com/fasterthanlime/ubio/blob/main/src/http/mod.rs>
+use self::http_adapter::Opts;
+
 use super::*;
 use futures::{Stream, StreamExt, TryStreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Method, StatusCode, Url,
 };
+use std::pin::Pin;
 use std::str::FromStr;
-use std::{fmt, pin::Pin};
 
 /// A struct that implements [AsyncSliceReader] using HTTP range requests
+#[derive(Debug)]
 pub struct HttpAdapter {
-    client: reqwest::Client,
     opts: http_adapter::Opts,
-    url: Url,
     size: Option<u64>,
-}
-
-impl fmt::Debug for HttpAdapter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Resource")
-            .field("url", &self.url)
-            .field("size", &self.size)
-            .finish_non_exhaustive()
-    }
 }
 
 impl HttpAdapter {
     /// Creates a new [`HttpAdapter`] from a URL
     pub fn new(url: Url) -> Self {
-        Self::with_opts(url, Default::default())
+        Self::with_opts(Opts {
+            url,
+            client: reqwest::Client::new(),
+            headers: None,
+        })
     }
 
     /// Creates a new [`HttpAdapter`] from a URL and options
-    pub fn with_opts(url: Url, opts: http_adapter::Opts) -> Self {
-        let client = reqwest::Client::new();
+    pub fn with_opts(opts: http_adapter::Opts) -> Self {
+        Self { opts, size: None }
+    }
 
-        Self {
-            client,
-            opts,
-            url,
-            size: None,
-        }
+    /// Returns the client used for requests
+    pub fn client(&self) -> &reqwest::Client {
+        &self.opts.client
+    }
+
+    /// Returns the URL of the resource
+    pub fn url(&self) -> &Url {
+        &self.opts.url
     }
 
     async fn head_request(&self) -> Result<reqwest::Response, reqwest::Error> {
-        let mut req_builder = self.client.request(Method::HEAD, self.url.clone());
+        let mut req_builder = self.client().request(Method::HEAD, self.url().clone());
         if let Some(headers) = self.opts.headers.as_ref() {
             for (k, v) in headers.iter() {
                 req_builder = req_builder.header(k, v);
             }
         }
         let req = req_builder.build()?;
-        let res = self.client.execute(req).await?;
+        let res = self.client().execute(req).await?;
         Ok(res)
     }
 
@@ -69,7 +68,7 @@ impl HttpAdapter {
             Some(to) => format!("bytes={from}-{to}"),
             None => format!("bytes={from}-"),
         };
-        let mut req_builder = self.client.request(Method::GET, self.url.clone());
+        let mut req_builder = self.client().request(Method::GET, self.url().clone());
         if let Some(headers) = self.opts.headers.as_ref() {
             for (k, v) in headers.iter() {
                 req_builder = req_builder.header(k, v);
@@ -78,7 +77,7 @@ impl HttpAdapter {
         req_builder = req_builder.header("range", range);
 
         let req = req_builder.build()?;
-        let res = self.client.execute(req).await?;
+        let res = self.client().execute(req).await?;
         Ok(res)
     }
 
@@ -113,17 +112,22 @@ impl HttpAdapter {
     }
 }
 
-/// Futures for the [HttpAdapter]
+/// Support for the [HttpAdapter]
 pub mod http_adapter {
     use bytes::BytesMut;
 
     use super::*;
 
     /// Options for [HttpAdapter]
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     pub struct Opts {
-        pub(crate) headers: Option<HeaderMap<HeaderValue>>,
-        pub(crate) client: Option<reqwest::Client>,
+        /// The URL of the resource
+        pub url: Url,
+        /// Additional headers to send with the requests
+        pub headers: Option<HeaderMap<HeaderValue>>,
+        /// The client to use for requests. If not set, a new client will be created
+        /// for each reader, which is wasteful.
+        pub client: reqwest::Client,
     }
 
     impl AsyncSliceReader for HttpAdapter {
