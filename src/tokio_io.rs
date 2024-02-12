@@ -1,6 +1,6 @@
 //! Blocking io for [std::fs::File], using the tokio blocking task pool.
 use bytes::Bytes;
-use futures::{future::LocalBoxFuture, Future, FutureExt};
+use futures::Future;
 use pin_project::pin_project;
 use std::{
     io::{self, Read, Seek, SeekFrom},
@@ -65,101 +65,41 @@ pub mod file {
 
     use super::*;
 
-    newtype_future!(
-        /// The future returned by [File::read_at]
-        #[derive(Debug)]
-        ReadAtFuture,
-        Asyncify<'a, Bytes, FileAdapterFsm>,
-        io::Result<Bytes>
-    );
-    newtype_future!(
-        /// The future returned by [File::len]
-        #[derive(Debug)]
-        LenFuture,
-        Asyncify<'a, u64, FileAdapterFsm>,
-        io::Result<u64>
-    );
-    newtype_future!(
-        /// The future returned by [File::write_bytes_at]
-        #[derive(Debug)]
-        WriteBytesAtFuture,
-        Asyncify<'a, (), FileAdapterFsm>,
-        io::Result<()>
-    );
-    newtype_future!(
-        /// The future returned by [File::write_at]
-        #[derive(Debug)]
-        WriteAtFuture,
-        Asyncify<'a, (), FileAdapterFsm>,
-        io::Result<()>
-    );
-    newtype_future!(
-        /// The future returned by [File::set_len]
-        #[derive(Debug)]
-        SetLenFuture,
-        Asyncify<'a, (), FileAdapterFsm>,
-        io::Result<()>
-    );
-    newtype_future!(
-        /// The future returned by [File::sync]
-        #[derive(Debug)]
-        SyncFuture,
-        Asyncify<'a, (), FileAdapterFsm>,
-        io::Result<()>
-    );
-
     impl AsyncSliceReader for File {
-        type ReadAtFuture<'a> = file::ReadAtFuture<'a>;
-
-        fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-            let fut = self
-                .0
-                .take()
-                .map(|t| (t.read_at(offset, len), &mut self.0))
-                .into();
-            ReadAtFuture(fut)
+        async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+            Asyncify::from(self.0.take().map(|t| (t.read_at(offset, len), &mut self.0))).await
         }
 
-        type LenFuture<'a> = LenFuture<'a>;
-
-        fn len(&mut self) -> Self::LenFuture<'_> {
-            let fut = self.0.take().map(|t| (t.len(), &mut self.0)).into();
-            LenFuture(fut)
+        async fn len(&mut self) -> io::Result<u64> {
+            Asyncify::from(self.0.take().map(|t| (t.len(), &mut self.0))).await
         }
     }
 
     impl AsyncSliceWriter for File {
-        type WriteBytesAtFuture<'a> = WriteBytesAtFuture<'a>;
-
-        fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-            let fut = self
-                .0
-                .take()
-                .map(|t| (t.write_bytes_at(offset, data), &mut self.0))
-                .into();
-            WriteBytesAtFuture(fut)
+        async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+            Asyncify::from(
+                self.0
+                    .take()
+                    .map(|t| (t.write_bytes_at(offset, data), &mut self.0)),
+            )
+            .await
         }
 
-        type WriteAtFuture<'a> = WriteAtFuture<'a>;
-        fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
-            let fut = self
-                .0
-                .take()
-                .map(|t| (t.write_at(offset, data), &mut self.0))
-                .into();
-            WriteAtFuture(fut)
+        async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+            Asyncify::from(
+                self.0
+                    .take()
+                    .map(|t| (t.write_at(offset, data), &mut self.0)),
+            )
+            .await
         }
 
-        type SyncFuture<'a> = SyncFuture<'a>;
-        fn sync(&mut self) -> Self::SyncFuture<'_> {
-            let fut = self.0.take().map(|t| (t.sync(), &mut self.0)).into();
-            SyncFuture(fut)
+        async fn sync(&mut self) -> io::Result<()> {
+            Asyncify::from(self.0.take().map(|t| (t.sync(), &mut self.0))).await
         }
 
-        type SetLenFuture<'a> = SetLenFuture<'a>;
-        fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
-            let fut = self.0.take().map(|t| (t.set_len(len), &mut self.0)).into();
-            SetLenFuture(fut)
+        async fn set_len(&mut self, len: u64) -> io::Result<()> {
+            Asyncify::from(self.0.take().map(|t| (t.set_len(len), &mut self.0))).await
         }
     }
 }
@@ -313,24 +253,20 @@ impl<W> ConcatenateSliceWriter<W> {
 }
 
 impl<W: AsyncWrite + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWriter<W> {
-    type WriteBytesAtFuture<'a> = concatenate_slice_writer::WriteBytesAt<'a, W>;
-    fn write_bytes_at(&mut self, _offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        tokio_helper::write_bytes(&mut self.0, data)
+    async fn write_bytes_at(&mut self, _offset: u64, data: Bytes) -> io::Result<()> {
+        tokio_helper::write_bytes(&mut self.0, data).await
     }
 
-    type WriteAtFuture<'a> = concatenate_slice_writer::WriteAt<'a, W>;
-    fn write_at<'a>(&'a mut self, _offset: u64, bytes: &'a [u8]) -> Self::WriteAtFuture<'a> {
-        tokio_helper::write(&mut self.0, bytes)
+    async fn write_at(&mut self, _offset: u64, bytes: &[u8]) -> io::Result<()> {
+        tokio_helper::write(&mut self.0, bytes).await
     }
 
-    type SyncFuture<'a> = concatenate_slice_writer::Sync<'a, W>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        tokio_helper::flush(&mut self.0)
+    async fn sync(&mut self) -> io::Result<()> {
+        tokio_helper::flush(&mut self.0).await
     }
 
-    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
-    fn set_len(&mut self, _len: u64) -> Self::SetLenFuture<'_> {
-        futures::future::ready(io::Result::Ok(()))
+    async fn set_len(&mut self, _len: u64) -> io::Result<()> {
+        io::Result::Ok(())
     }
 }
 
@@ -346,22 +282,16 @@ pub mod concatenate_slice_writer {
 pub struct TokioStreamWriter<T>(pub T);
 
 impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T> {
-    type WriteFuture<'a> = tokio_stream_writer::Write<'a, T> where Self: 'a;
-
-    fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
-        tokio_helper::write(&mut self.0, data)
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        tokio_helper::write(&mut self.0, data).await
     }
 
-    type WriteBytesFuture<'a> = tokio_stream_writer::WriteBytes<'a, T> where Self: 'a;
-
-    fn write_bytes(&mut self, data: Bytes) -> Self::WriteBytesFuture<'_> {
-        tokio_helper::write_bytes(&mut self.0, data)
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        tokio_helper::write_bytes(&mut self.0, data).await
     }
 
-    type SyncFuture<'a> = tokio_stream_writer::Sync<'a, T> where Self: 'a;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        tokio_helper::flush(&mut self.0)
+    async fn sync(&mut self) -> io::Result<()> {
+        tokio_helper::flush(&mut self.0).await
     }
 }
 
@@ -370,17 +300,10 @@ impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T
 pub struct TokioStreamReader<T>(T);
 
 impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T> {
-    type ReadFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>
-    where
-        Self: 'a;
-
-    fn read(&mut self, len: usize) -> Self::ReadFuture<'_> {
-        async move {
-            let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
-            (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
-            Ok(buf.into())
-        }
-        .boxed_local()
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
+        (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
+        Ok(buf.into())
     }
 }
 
