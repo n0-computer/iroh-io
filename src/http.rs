@@ -5,7 +5,7 @@
 use self::http_adapter::Opts;
 
 use super::*;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures_lite::{Stream, StreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Method, StatusCode, Url,
@@ -88,7 +88,7 @@ impl HttpAdapter {
     ) -> io::Result<Pin<Box<dyn Stream<Item = io::Result<Bytes>>>>> {
         if let Some(size) = self.size {
             if offset >= size {
-                return Ok(Box::pin(futures::stream::empty()));
+                return Ok(Box::pin(futures_lite::stream::empty()));
             }
         }
         let from = offset;
@@ -101,11 +101,13 @@ impl HttpAdapter {
             .unwrap_or(to);
         let res = self.range_request(from, to).await.map_err(make_io_error)?;
         if res.status().is_success() {
-            Ok(Box::pin(res.bytes_stream().map_err(make_io_error)))
+            Ok(Box::pin(
+                res.bytes_stream().map(|r| r.map_err(make_io_error)),
+            ))
         } else if res.status() == StatusCode::RANGE_NOT_SATISFIABLE {
             // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/416
             // we requested a range that is out of bounds, just return nothing
-            Ok(Box::pin(futures::stream::empty()))
+            Ok(Box::pin(futures_lite::stream::empty()))
         } else {
             Err(make_io_error(format!("http error {}", res.status())))
         }

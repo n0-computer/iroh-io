@@ -7,6 +7,7 @@
 //! Statistics are always added using saturating arithmetic, so there can't be
 //! a panic even in unlikely scenarios.
 use std::{
+    future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
@@ -14,7 +15,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::prelude::*;
 use pin_project::pin_project;
 
 use crate::{AsyncSliceReader, AsyncSliceWriter, AsyncStreamReader, AsyncStreamWriter};
@@ -488,7 +488,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bytes::{Bytes, BytesMut};
+    use bytes::BytesMut;
 
     use super::*;
 
