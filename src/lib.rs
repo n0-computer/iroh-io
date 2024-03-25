@@ -306,7 +306,7 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use proptest::prelude::*;
-    use std::{fmt::Debug, io};
+    use std::fmt::Debug;
 
     #[cfg(feature = "tokio-io")]
     use std::io::Write;

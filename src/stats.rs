@@ -488,7 +488,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bytes::{Bytes, BytesMut};
+    use bytes::BytesMut;
 
     use super::*;
 

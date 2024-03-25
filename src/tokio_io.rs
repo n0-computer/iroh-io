@@ -61,8 +61,6 @@ impl File {
 
 /// Support for the [File]
 pub mod file {
-    use bytes::Bytes;
-
     use super::*;
 
     impl AsyncSliceReader for File {
