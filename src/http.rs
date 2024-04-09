@@ -116,8 +116,6 @@ impl HttpAdapter {
 
 /// Support for the [HttpAdapter]
 pub mod http_adapter {
-    use bytes::BytesMut;
-
     use super::*;
 
     /// Options for [HttpAdapter]

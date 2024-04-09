@@ -361,7 +361,6 @@ mod tests {
     use crate::mem::limited_range;
 
     use super::*;
-    use bytes::BytesMut;
     use proptest::prelude::*;
     use std::fmt::Debug;
 

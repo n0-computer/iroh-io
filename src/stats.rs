@@ -488,8 +488,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bytes::BytesMut;
-
     use super::*;
 
     #[tokio::test]
@@ -517,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn tracking_slice_writer() {
-        let mut writer = TrackingSliceWriter::new(BytesMut::new());
+        let mut writer = TrackingSliceWriter::new(Vec::new());
         writer.write_at(0, &[1, 2, 3]).await.unwrap();
         writer.write_at(10, &[1, 2, 3]).await.unwrap();
         writer
