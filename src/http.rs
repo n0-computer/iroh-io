@@ -10,28 +10,28 @@ use reqwest::{
     header::{HeaderMap, HeaderValue},
     Method, StatusCode, Url,
 };
-use std::pin::Pin;
 use std::str::FromStr;
+use std::{pin::Pin, sync::Arc};
 
 /// A struct that implements [AsyncSliceReader] using HTTP range requests
 #[derive(Debug)]
 pub struct HttpAdapter {
-    opts: http_adapter::Opts,
+    opts: Arc<http_adapter::Opts>,
     size: Option<u64>,
 }
 
 impl HttpAdapter {
     /// Creates a new [`HttpAdapter`] from a URL
     pub fn new(url: Url) -> Self {
-        Self::with_opts(Opts {
+        Self::with_opts(Arc::new(Opts {
             url,
             client: reqwest::Client::new(),
             headers: None,
-        })
+        }))
     }
 
     /// Creates a new [`HttpAdapter`] from a URL and options
-    pub fn with_opts(opts: http_adapter::Opts) -> Self {
+    pub fn with_opts(opts: Arc<http_adapter::Opts>) -> Self {
         Self { opts, size: None }
     }
 

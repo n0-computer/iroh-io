@@ -1,5 +1,3 @@
-use crate::AsyncStreamWriter;
-
 use super::{AsyncSliceReader, AsyncSliceWriter};
 use bytes::{Bytes, BytesMut};
 use std::io;
@@ -57,36 +55,6 @@ impl AsyncSliceWriter for Vec<u8> {
         let len = len.try_into().unwrap_or(usize::MAX);
         self.resize(len, 0);
         Ok(())
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl AsyncStreamWriter for Vec<u8> {
-    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.extend_from_slice(data);
-        Ok(())
-    }
-
-    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
-        self.write(&data).await
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl AsyncStreamWriter for bytes::BytesMut {
-    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.extend_from_slice(data);
-        Ok(())
-    }
-
-    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
-        self.write(&data).await
     }
 
     async fn sync(&mut self) -> io::Result<()> {
