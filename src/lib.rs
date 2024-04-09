@@ -37,9 +37,9 @@
 //! an allocation.
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::future::Future;
-use std::io;
+use std::io::{self, Cursor};
 
 /// A trait to abstract async reading from different resource.
 ///
@@ -188,6 +188,31 @@ impl AsyncStreamReader for Bytes {
     }
 }
 
+impl AsyncStreamReader for &[u8] {
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        let len = len.min(self.len());
+        let res = Bytes::copy_from_slice(&self[..len]);
+        *self = &self[len..];
+        Ok(res)
+    }
+}
+
+impl AsyncStreamReader for BytesMut {
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        let res = self.split_to(len.min(BytesMut::len(self)));
+        Ok(res.freeze())
+    }
+}
+
+impl<T: AsyncSliceReader> AsyncStreamReader for Cursor<T> {
+    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        let offset = self.position();
+        let res = self.get_mut().read_at(offset, len).await?;
+        self.set_position(offset + res.len() as u64);
+        Ok(res)
+    }
+}
+
 /// A non seekable writer, e.g. a network socket.
 pub trait AsyncStreamWriter {
     /// Write the entire slice.
@@ -215,6 +240,38 @@ impl<T: AsyncStreamWriter> AsyncStreamWriter for &mut T {
 
     async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
         (**self).write_bytes(data).await
+    }
+}
+
+impl AsyncStreamWriter for Vec<u8> {
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        self.extend_from_slice(data);
+        Ok(())
+    }
+
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        self.extend_from_slice(data.as_ref());
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl AsyncStreamWriter for BytesMut {
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        self.extend_from_slice(data);
+        Ok(())
+    }
+
+    async fn write_bytes(&mut self, data: Bytes) -> io::Result<()> {
+        self.extend_from_slice(data.as_ref());
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
