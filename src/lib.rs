@@ -38,7 +38,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 use bytes::Bytes;
-use futures::Future;
+use std::future::Future;
 use std::io;
 
 /// A trait to abstract async reading from different resource.
@@ -234,60 +234,6 @@ pub use http::*;
 /// implementations for [AsyncSliceReader] and [AsyncSliceWriter] for [bytes::Bytes] and [bytes::BytesMut]
 mod mem;
 
-impl<L, R> AsyncSliceReader for futures::future::Either<L, R>
-where
-    L: AsyncSliceReader + 'static,
-    R: AsyncSliceReader + 'static,
-{
-    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
-        match self {
-            Self::Left(l) => l.read_at(offset, len).await,
-            Self::Right(r) => r.read_at(offset, len).await,
-        }
-    }
-
-    async fn len(&mut self) -> io::Result<u64> {
-        match self {
-            Self::Left(l) => l.len().await,
-            Self::Right(r) => r.len().await,
-        }
-    }
-}
-
-impl<L, R> AsyncSliceWriter for futures::future::Either<L, R>
-where
-    L: AsyncSliceWriter + 'static,
-    R: AsyncSliceWriter + 'static,
-{
-    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
-        match self {
-            Self::Left(l) => l.write_bytes_at(offset, data).await,
-            Self::Right(r) => r.write_bytes_at(offset, data).await,
-        }
-    }
-
-    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
-        match self {
-            Self::Left(l) => l.write_at(offset, data).await,
-            Self::Right(r) => r.write_at(offset, data).await,
-        }
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        match self {
-            Self::Left(l) => l.sync().await,
-            Self::Right(r) => r.sync().await,
-        }
-    }
-
-    async fn set_len(&mut self, len: u64) -> io::Result<()> {
-        match self {
-            Self::Left(l) => l.set_len(len).await,
-            Self::Right(r) => r.set_len(len).await,
-        }
-    }
-}
-
 #[cfg(feature = "tokio-util")]
 impl<L, R> AsyncSliceReader for tokio_util::either::Either<L, R>
 where
@@ -360,7 +306,7 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use proptest::prelude::*;
-    use std::{fmt::Debug, io};
+    use std::fmt::Debug;
 
     #[cfg(feature = "tokio-io")]
     use std::io::Write;

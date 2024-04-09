@@ -1,8 +1,8 @@
 //! Blocking io for [std::fs::File], using the tokio blocking task pool.
 use bytes::Bytes;
-use futures::Future;
 use pin_project::pin_project;
 use std::{
+    future::Future,
     io::{self, Read, Seek, SeekFrom},
     marker::PhantomPinned,
     path::PathBuf,
@@ -61,8 +61,6 @@ impl File {
 
 /// Support for the [File]
 pub mod file {
-    use bytes::Bytes;
-
     use super::*;
 
     impl AsyncSliceReader for File {
