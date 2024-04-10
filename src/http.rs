@@ -146,7 +146,7 @@ pub mod http_adapter {
             Ok(res.freeze())
         }
 
-        async fn len(&mut self) -> io::Result<u64> {
+        async fn size(&mut self) -> io::Result<u64> {
             let io_err = |text: &str| io::Error::new(io::ErrorKind::Other, text);
             let head_response = self
                 .head_request()
