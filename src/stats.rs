@@ -222,8 +222,12 @@ impl<W> TrackingStreamReader<W> {
 }
 
 impl<W: AsyncStreamReader> AsyncStreamReader for TrackingStreamReader<W> {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
-        AggregateSizeAndStats::new(self.inner.read(len), &mut self.stats.read).await
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
+        AggregateSizeAndStats::new(self.inner.read_bytes(len), &mut self.stats.read).await
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        AggregateSizeAndStats::new(self.inner.read(), &mut self.stats.read).await
     }
 }
 
@@ -288,8 +292,8 @@ impl<R: AsyncSliceReader> AsyncSliceReader for TrackingSliceReader<R> {
         AggregateSizeAndStats::new(self.inner.read_at(offset, len), &mut self.stats.read_at).await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
-        AggregateStats::new(self.inner.len(), &mut self.stats.len).await
+    async fn size(&mut self) -> io::Result<u64> {
+        AggregateStats::new(self.inner.size(), &mut self.stats.len).await
     }
 }
 
@@ -507,8 +511,8 @@ mod tests {
     #[tokio::test]
     async fn tracking_stream_reader() {
         let mut writer = TrackingStreamReader::new(Bytes::from(vec![0, 1, 2, 3]));
-        writer.read(2).await.unwrap();
-        writer.read(3).await.unwrap();
+        writer.read_bytes(2).await.unwrap();
+        writer.read_bytes(3).await.unwrap();
         assert_eq!(writer.stats().read.size, 4); // not 5, because the last read was only 2 bytes
         assert_eq!(writer.stats().read.stats.count, 2);
     }
@@ -537,7 +541,7 @@ mod tests {
         let mut reader = TrackingSliceReader::new(Bytes::from(vec![1u8, 2, 3]));
         let _ = reader.read_at(0, 1).await.unwrap();
         let _ = reader.read_at(10, 1).await.unwrap();
-        let _ = reader.len().await.unwrap();
+        let _ = reader.size().await.unwrap();
         assert_eq!(reader.stats().read_at.size, 1);
         assert_eq!(reader.stats().read_at.stats.count, 2);
         assert_eq!(reader.stats().len.count, 1);

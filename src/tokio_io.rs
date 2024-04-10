@@ -67,7 +67,7 @@ pub mod file {
             Asyncify::from(self.0.take().map(|t| (t.read_at(offset, len), &mut self.0))).await
         }
 
-        async fn len(&mut self) -> io::Result<u64> {
+        async fn size(&mut self) -> io::Result<u64> {
             Asyncify::from(self.0.take().map(|t| (t.len(), &mut self.0))).await
         }
     }
@@ -289,12 +289,30 @@ impl<T: tokio::io::AsyncWrite + Unpin> AsyncStreamWriter for TokioStreamWriter<T
 
 /// Utility to convert a [tokio::io::AsyncRead] into an [AsyncStreamReader].
 #[derive(Debug, Clone)]
-pub struct TokioStreamReader<T>(T);
+pub struct TokioStreamReader<T>(pub T);
+
+impl<T> TokioStreamReader<T> {
+    /// Create a new `TokioStreamReader` from an inner reader
+    pub fn new(inner: T) -> Self {
+        Self(inner)
+    }
+
+    /// Return the inner reader
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
 
 impl<T: tokio::io::AsyncRead + Unpin> AsyncStreamReader for TokioStreamReader<T> {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
         let mut buf = Vec::with_capacity(len.min(MAX_PREALLOC));
         (&mut self.0).take(len as u64).read_to_end(&mut buf).await?;
         Ok(buf.into())
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        let mut buf = [0; L];
+        self.0.read_exact(&mut buf).await?;
+        Ok(buf)
     }
 }

@@ -37,7 +37,7 @@
 //! an allocation.
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use std::future::Future;
 use std::io::{self, Cursor};
 
@@ -64,7 +64,7 @@ pub trait AsyncSliceReader {
 
     /// Get the length of the resource
     #[must_use = "io futures must be polled to completion"]
-    fn len(&mut self) -> impl Future<Output = io::Result<u64>>;
+    fn size(&mut self) -> impl Future<Output = io::Result<u64>>;
 }
 
 impl<'b, T: AsyncSliceReader> AsyncSliceReader for &'b mut T {
@@ -72,8 +72,8 @@ impl<'b, T: AsyncSliceReader> AsyncSliceReader for &'b mut T {
         (**self).read_at(offset, len).await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
-        (**self).len().await
+    async fn size(&mut self) -> io::Result<u64> {
+        (**self).size().await
     }
 }
 
@@ -82,8 +82,8 @@ impl<T: AsyncSliceReader> AsyncSliceReader for Box<T> {
         (**self).read_at(offset, len).await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
-        (**self).len().await
+    async fn size(&mut self) -> io::Result<u64> {
+        (**self).size().await
     }
 }
 
@@ -172,44 +172,93 @@ pub trait AsyncStreamReader {
     /// Read at most `len` bytes. To read to the end, pass u64::MAX.
     ///
     /// returns an empty buffer to indicate EOF.
-    fn read(&mut self, len: usize) -> impl Future<Output = io::Result<Bytes>>;
+    fn read_bytes(&mut self, len: usize) -> impl Future<Output = io::Result<Bytes>>;
+
+    /// Read a fixed size buffer.
+    ///
+    /// If there are less than L bytes available, an io::ErrorKind::UnexpectedEof error is returned.
+    fn read<const L: usize>(&mut self) -> impl Future<Output = io::Result<[u8; L]>>;
 }
 
 impl<T: AsyncStreamReader> AsyncStreamReader for &mut T {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
-        (**self).read(len).await
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
+        (**self).read_bytes(len).await
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        (**self).read().await
     }
 }
 
 impl AsyncStreamReader for Bytes {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
         let res = self.split_to(len.min(Bytes::len(self)));
         Ok(res)
     }
-}
 
-impl AsyncStreamReader for &[u8] {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
-        let len = len.min(self.len());
-        let res = Bytes::copy_from_slice(&self[..len]);
-        *self = &self[len..];
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        if Bytes::len(self) < L {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let mut res = [0u8; L];
+        self.split_to(L).copy_to_slice(&mut res);
         Ok(res)
     }
 }
 
 impl AsyncStreamReader for BytesMut {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
         let res = self.split_to(len.min(BytesMut::len(self)));
         Ok(res.freeze())
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        if BytesMut::len(self) < L {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let mut res = [0u8; L];
+        self.split_to(L).copy_to_slice(&mut res);
+        Ok(res)
+    }
+}
+
+impl AsyncStreamReader for &[u8] {
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
+        let len = len.min(self.len());
+        let res = Bytes::copy_from_slice(&self[..len]);
+        *self = &self[len..];
+        Ok(res)
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        if self.len() < L {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let mut res = [0u8; L];
+        res.copy_from_slice(&self[..L]);
+        *self = &self[L..];
+        Ok(res)
     }
 }
 
 impl<T: AsyncSliceReader> AsyncStreamReader for Cursor<T> {
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+    async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
         let offset = self.position();
         let res = self.get_mut().read_at(offset, len).await?;
         self.set_position(offset + res.len() as u64);
         Ok(res)
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        let offset = self.position();
+        let res = self.get_mut().read_at(offset, L).await?;
+        if res.len() < L {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        self.set_position(offset + res.len() as u64);
+        let mut buf = [0u8; L];
+        buf.copy_from_slice(&res);
+        Ok(buf)
     }
 }
 
@@ -304,10 +353,10 @@ where
         }
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         match self {
-            Self::Left(l) => l.len().await,
-            Self::Right(r) => r.len().await,
+            Self::Left(l) => l.size().await,
+            Self::Right(r) => r.size().await,
         }
     }
 }
@@ -452,7 +501,7 @@ mod tests {
         let res = file.read_at(0, usize::MAX).await?;
         assert_eq!(res, expected);
 
-        let res = file.len().await?;
+        let res = file.size().await?;
         assert_eq!(res, 100);
 
         // read 3 bytes at offset 0
@@ -687,7 +736,7 @@ mod tests {
                     current = offset.checked_add(len as u64).unwrap();
                 }
                 ReadOp::Len => {
-                    let len = AsyncSliceReader::len(&mut file).await?;
+                    let len = AsyncSliceReader::size(&mut file).await?;
                     assert_eq!(len, actual.len() as u64);
                 }
             }
@@ -717,7 +766,7 @@ mod tests {
         let url = reqwest::Url::parse(&url).unwrap();
         let server = tokio::spawn(server);
         let mut reader = HttpAdapter::new(url);
-        let len = reader.len().await.unwrap();
+        let len = reader.size().await.unwrap();
         assert_eq!(len, 11);
         println!("len: {:?}", reader);
         let part = reader.read_at(0, 11).await.unwrap();
@@ -747,7 +796,9 @@ mod tests {
 
         #[test]
         fn bytes_read(data in proptest::collection::vec(any::<u8>(), 0..1024), ops in random_read_ops(1024, 1024, 2)) {
-            async_test(read_op_test(ops, Bytes::from(data.clone()), &data)).unwrap();
+            async_test(read_op_test(ops.clone(), Bytes::from(data.clone()), &data)).unwrap();
+            async_test(read_op_test(ops.clone(), BytesMut::from(data.as_slice()), &data)).unwrap();
+            async_test(read_op_test(ops, data.as_slice(), &data)).unwrap();
         }
 
         #[cfg(feature = "tokio-io")]

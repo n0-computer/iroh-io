@@ -7,7 +7,7 @@ impl AsyncSliceReader for bytes::Bytes {
         Ok(get_limited_slice(self, offset, len))
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         Ok(Bytes::len(self) as u64)
     }
 }
@@ -17,8 +17,18 @@ impl AsyncSliceReader for bytes::BytesMut {
         Ok(copy_limited_slice(self, offset, len))
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         Ok(BytesMut::len(self) as u64)
+    }
+}
+
+impl AsyncSliceReader for &[u8] {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        Ok(copy_limited_slice(self, offset, len))
+    }
+
+    async fn size(&mut self) -> io::Result<u64> {
+        Ok(self.len() as u64)
     }
 }
 
