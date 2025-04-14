@@ -37,9 +37,12 @@
 //! an allocation.
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
+use std::{
+    future::Future,
+    io::{self, Cursor},
+};
+
 use bytes::{Buf, Bytes, BytesMut};
-use std::future::Future;
-use std::io::{self, Cursor};
 
 /// A trait to abstract async reading from different resource.
 ///
@@ -82,7 +85,7 @@ pub trait AsyncSliceReader {
     fn size(&mut self) -> impl Future<Output = io::Result<u64>>;
 }
 
-impl<'b, T: AsyncSliceReader> AsyncSliceReader for &'b mut T {
+impl<T: AsyncSliceReader> AsyncSliceReader for &mut T {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         (**self).read_at(offset, len).await
     }
@@ -146,7 +149,7 @@ pub trait AsyncSliceWriter: Sized {
     fn sync(&mut self) -> impl Future<Output = io::Result<()>>;
 }
 
-impl<'b, T: AsyncSliceWriter> AsyncSliceWriter for &'b mut T {
+impl<T: AsyncSliceWriter> AsyncSliceWriter for &mut T {
     async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         (**self).write_at(offset, data).await
     }
@@ -193,7 +196,6 @@ pub trait AsyncStreamReader {
     ///
     /// If there are less than L bytes available, an io::ErrorKind::UnexpectedEof error is returned.
     fn read<const L: usize>(&mut self) -> impl Future<Output = io::Result<[u8; L]>>;
-
 
     /// Variant of read_bytes that returns an error if less than `len` bytes are read.
     fn read_bytes_exact(&mut self, len: usize) -> impl Future<Output = io::Result<Bytes>> {
@@ -439,28 +441,30 @@ fn make_io_error<E>(e: E) -> io::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::mem::limited_range;
-
-    use super::*;
-    use proptest::prelude::*;
     use std::fmt::Debug;
-
     #[cfg(feature = "tokio-io")]
     use std::io::Write;
+
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::mem::limited_range;
 
     /// A test server that serves data on a random port, supporting head, get, and range requests
     #[cfg(feature = "x-http")]
     mod test_server {
-        use super::*;
+        use std::{net::SocketAddr, ops::Range, sync::Arc};
+
         use axum::{routing::get, Extension, Router};
         use hyper::{Body, Request, Response, StatusCode};
-        use std::{net::SocketAddr, ops::Range, sync::Arc};
+
+        use super::*;
 
         pub fn serve(data: Vec<u8>) -> (SocketAddr, impl Future<Output = hyper::Result<()>>) {
             // Create an Axum router

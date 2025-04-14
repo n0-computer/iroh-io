@@ -1,6 +1,4 @@
 //! Blocking io for [std::fs::File], using the tokio blocking task pool.
-use bytes::Bytes;
-use pin_project::pin_project;
 use std::{
     future::Future,
     io::{self, Read, Seek, SeekFrom},
@@ -8,14 +6,16 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+use bytes::Bytes;
+use pin_project::pin_project;
 use tokio::{
     io::{AsyncReadExt, AsyncWrite},
     task::{spawn_blocking, JoinHandle},
 };
 
-use crate::AsyncStreamReader;
-
 use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter, AsyncStreamWriter};
+use crate::AsyncStreamReader;
 
 const MAX_PREALLOC: usize = 1024 * 16;
 
@@ -138,11 +138,10 @@ impl<'a, T: 'a, R> Future for Asyncify<'a, R, T> {
                         **h = Some(state);
                         r
                     }
-                    Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
+                    Err(e) => Err(io::Error::other(e)),
                 }
             }),
-            AsyncifyProj::BusyErr => Poll::Ready(io::Result::Err(io::Error::new(
-                io::ErrorKind::Other,
+            AsyncifyProj::BusyErr => Poll::Ready(io::Result::Err(io::Error::other(
                 "previous io op not polled to completion",
             ))),
         }
