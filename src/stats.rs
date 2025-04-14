@@ -414,7 +414,7 @@ impl<'a, F: Future> AggregateStats<'a, F> {
     }
 }
 
-impl<'a, F: Future> Future for AggregateStats<'a, F> {
+impl<F: Future> Future for AggregateStats<'_, F> {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -466,7 +466,7 @@ impl<T: AsRef<[u8]>> ReadResult for std::io::Result<T> {
     }
 }
 
-impl<'a, F: Future> Future for AggregateSizeAndStats<'a, F>
+impl<F: Future> Future for AggregateSizeAndStats<'_, F>
 where
     F::Output: ReadResult,
 {

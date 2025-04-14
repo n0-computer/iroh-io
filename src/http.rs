@@ -2,16 +2,16 @@
 //!
 //! Uses the [reqwest](https://docs.rs/reqwest) crate. Somewhat inspired by
 //! <https://github.com/fasterthanlime/ubio/blob/main/src/http/mod.rs>
-use self::http_adapter::Opts;
+use std::{pin::Pin, str::FromStr, sync::Arc};
 
-use super::*;
 use futures_lite::{Stream, StreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Method, StatusCode, Url,
 };
-use std::str::FromStr;
-use std::{pin::Pin, sync::Arc};
+
+use self::http_adapter::Opts;
+use super::*;
 
 /// A struct that implements [AsyncSliceReader] using HTTP range requests
 #[derive(Debug)]
@@ -147,7 +147,7 @@ pub mod http_adapter {
         }
 
         async fn size(&mut self) -> io::Result<u64> {
-            let io_err = |text: &str| io::Error::new(io::ErrorKind::Other, text);
+            let io_err = |text: &str| io::Error::other(text);
             let head_response = self
                 .head_request()
                 .await

@@ -1,6 +1,8 @@
-use super::{AsyncSliceReader, AsyncSliceWriter};
-use bytes::{Bytes, BytesMut};
 use std::io;
+
+use bytes::{Bytes, BytesMut};
+
+use super::{AsyncSliceReader, AsyncSliceWriter};
 
 impl AsyncSliceReader for bytes::Bytes {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
