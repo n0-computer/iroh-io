@@ -62,6 +62,21 @@ pub trait AsyncSliceReader {
     #[must_use = "io futures must be polled to completion"]
     fn read_at(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>>;
 
+    /// Variant of read_at that returns an error if less than `len` bytes are read.
+    fn read_exact_at(
+        &mut self,
+        offset: u64,
+        len: usize,
+    ) -> impl Future<Output = io::Result<Bytes>> {
+        async move {
+            let res = self.read_at(offset, len).await?;
+            if res.len() < len {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            Ok(res)
+        }
+    }
+
     /// Get the length of the resource
     #[must_use = "io futures must be polled to completion"]
     fn size(&mut self) -> impl Future<Output = io::Result<u64>>;
@@ -178,6 +193,29 @@ pub trait AsyncStreamReader {
     ///
     /// If there are less than L bytes available, an io::ErrorKind::UnexpectedEof error is returned.
     fn read<const L: usize>(&mut self) -> impl Future<Output = io::Result<[u8; L]>>;
+
+
+    /// Variant of read_bytes that returns an error if less than `len` bytes are read.
+    fn read_bytes_exact(&mut self, len: usize) -> impl Future<Output = io::Result<Bytes>> {
+        async move {
+            let res = self.read_bytes(len).await?;
+            if res.len() < len {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            Ok(res)
+        }
+    }
+
+    /// Variant of read that returns an error if less than `L` bytes are read.
+    fn read_exact<const L: usize>(&mut self) -> impl Future<Output = io::Result<[u8; L]>> {
+        async move {
+            let res = self.read::<L>().await?;
+            if res.len() < L {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            Ok(res)
+        }
+    }
 }
 
 impl<T: AsyncStreamReader> AsyncStreamReader for &mut T {

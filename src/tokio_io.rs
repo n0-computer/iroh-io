@@ -45,6 +45,7 @@ impl File {
         Self::create(move || std::fs::File::open(path)).await
     }
 
+    /// Test helper to read the contents of the file
     #[cfg(test)]
     pub fn read_contents(&self) -> Vec<u8> {
         let mut std_file = &self.0.as_ref().unwrap().0;
